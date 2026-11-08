@@ -29,7 +29,7 @@ while True:
 
     choice = input("Choose an option: ")
 
-    if choice == "1":
+    if location == "1":
         explore()
 
     elif choice == "2":
