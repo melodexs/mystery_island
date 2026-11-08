@@ -40,6 +40,12 @@ def cross_bridge():
     else:
         print("The bridge is locked. Find the key first!")
 
+def enter_lighthouse():
+    if "key" in inventory and "torch" in inventory:
+        print("You enter the lighthouse. You restore the beacon. YOU WIN")
+
+    else:
+        print("You need the key and torch before entering!")
 
 def explore():
     print("\nWhere would you like to explore?")
