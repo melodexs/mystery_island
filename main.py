@@ -20,7 +20,14 @@ def collect_item():
     print("Your inventory:", inventory)
 
 def collect_key():
-    print("")    
+    if "key" in inventory:
+        print("You already have the key!")    
+
+    else:
+        print("You found the Lighthouse key")
+        inventory.append("key")
+
+    print("Your inventory:", inventory)
 
 
 def explore():
@@ -36,6 +43,7 @@ def explore():
 
     elif location == "2":
         print("You are exploring the Jungle.")
+        collect_key()
 
     else:
         print("Invalid location!")
