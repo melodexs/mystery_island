@@ -15,35 +15,50 @@ def start_game():
 
 
 def collect_item():
-    print("\nYou found a torch!")
-    inventory.append("torch")
+    if "torch" in inventory:
+        print("You already have a torch!")
+    else:
+        print("You found a torch!")
+        inventory.append("torch")
+
     print("Your inventory:", inventory)
+
 
 def collect_key():
     if "key" in inventory:
-        print("You already have the key!")    
-
+        print("You already have the key!")
     else:
-        print("You found the Lighthouse key")
+        print("You found the Lighthouse key!")
         inventory.append("key")
 
     print("Your inventory:", inventory)
+
+
+def cross_bridge():
+    if "key" in inventory:
+        print("The bridge unlocks! You can cross.")
+    else:
+        print("The bridge is locked. Find the key first!")
 
 
 def explore():
     print("\nWhere would you like to explore?")
     print("1. Beach")
     print("2. Jungle")
+    print("3. Bridge")
 
     location = input("Choose a location: ")
 
     if location == "1":
-        print("You are exploring the Beach.")
+        print("\nYou are exploring the Beach.")
         collect_item()
 
     elif location == "2":
-        print("You are exploring the Jungle.")
+        print("\nYou are exploring the Jungle.")
         collect_key()
+
+    elif location == "3":
+        cross_bridge()
 
     else:
         print("Invalid location!")
