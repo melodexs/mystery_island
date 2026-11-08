@@ -19,6 +19,9 @@ def collect_item():
     inventory.append("torch")
     print("Your inventory:", inventory)
 
+def collect_key():
+    print("")    
+
 
 def explore():
     print("\nWhere would you like to explore?")
