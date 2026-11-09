@@ -49,6 +49,7 @@ def enter_lighthouse():
 
     else:
         print("You need the key and torch before entering!")
+        return False
 
 def explore():
     print("\nWhere would you like to explore?")
