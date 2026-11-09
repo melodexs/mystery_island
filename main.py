@@ -38,9 +38,11 @@ def cross_bridge():
     if "key" in inventory:
         print("The bridge unlocks! You can cross.")
         won = enter_lighthouse()
+        return won
         
     else:
         print("The bridge is locked. Find the key first!")
+        return False
 
 def enter_lighthouse():
     if "key" in inventory and "torch" in inventory:
