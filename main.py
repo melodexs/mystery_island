@@ -37,7 +37,7 @@ def collect_key():
 def cross_bridge():
     if "key" in inventory:
         print("The bridge unlocks! You can cross.")
-        enter_lighthouse()
+        won = enter_lighthouse()
         
     else:
         print("The bridge is locked. Find the key first!")
