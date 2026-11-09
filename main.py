@@ -45,6 +45,7 @@ def cross_bridge():
 def enter_lighthouse():
     if "key" in inventory and "torch" in inventory:
         print("You enter the lighthouse. You restore the beacon. YOU WIN!")
+        return True
 
     else:
         print("You need the key and torch before entering!")
