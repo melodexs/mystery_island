@@ -85,7 +85,11 @@ while True:
 
     if choice == "1":
         start_game()
-        explore()
+        won = explore()
+
+        if won:
+            print("The rescue boat has arrived!")
+            break
 
     elif choice == "2":
         print("Goodbye!")
