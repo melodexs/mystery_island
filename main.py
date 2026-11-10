@@ -17,7 +17,7 @@ def start_game():
         won = explore()
 
         if won:
-            print("The rescue boat has arrived"):
+            print("The rescue boat has arrived")
             break
 
 def collect_item():
