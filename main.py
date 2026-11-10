@@ -70,10 +70,12 @@ def explore():
         collect_key()
 
     elif location == "3":
-        cross_bridge()
+        won = cross_bridge()
+        return won 
 
     else:
         print("Invalid location!")
+        return False
 
 
 while True:
