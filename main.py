@@ -13,6 +13,12 @@ def start_game():
     print("You are standing on the beach.")
     print("You see a forest ahead.")
 
+    while True:
+        won = explore()
+
+        if won:
+            print("The rescue boat has arrived"):
+            break
 
 def collect_item():
     if "torch" in inventory:
