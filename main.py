@@ -1,4 +1,42 @@
+import time
+import random
+
 inventory = []
+def display_introduction():
+    print("======= @gamer======")
+    print("loading", end="")
+    for i in range(4):
+        print(".",end="",flush=True)
+        time.sleep(1)
+    print("\nwelcome to mystery island")
+
+def creat_player():
+    while True:
+        name = input("what is your name? ").strip()
+        if name == "":
+            print("name must not be empty try again ")
+            continue 
+        return name
+    player = {
+        "name": name,
+        "energy": 5,
+        "location": "Beach",
+        "inventory": [],
+        "raining": False,
+        "temperature" 20
+    }
+    return player
+
+def update_weather(player):
+    player["temperature"] = random.randint(10,25)
+    if player["temperature"] > 15:
+        player["raining"] = False
+
+    else:
+        player["raining"] = True   
+
+def display_weather(player):
+    print(f"temperature{player["temperature"]}°C")           
 
 
 def show_menu():
@@ -121,6 +159,7 @@ def explore():
 
 
 while True:
+    display_introduction()
     show_menu()
 
     choice = input("Choose an option: ")
