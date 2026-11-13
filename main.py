@@ -64,6 +64,7 @@ def explore():
     print("1. Beach")
     print("2. Jungle")
     print("3. Bridge")
+    print("4. Cave")
 
     location = input("Choose a location: ")
 
@@ -81,7 +82,7 @@ def explore():
 
     else:
         print("Invalid location!")
-        return False
+    return False
 
 
 while True:
@@ -91,11 +92,6 @@ while True:
 
     if choice == "1":
         start_game()
-        won = explore()
-
-        if won:
-            print("The rescue boat has arrived!")
-            break
 
     elif choice == "2":
         print("Goodbye!")
