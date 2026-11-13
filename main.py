@@ -59,6 +59,16 @@ def enter_lighthouse():
         print("You need the key and torch before entering!")
         return False
 
+def collect_rope():
+    if "rope" in inventory:
+        print("You already have a rope!")
+
+    else:
+        print("You found a rope!")
+        inventory.append("rope")
+
+    print("Your inventory:", inventory)
+
 def explore():
     print("\nWhere would you like to explore?")
     print("1. Beach")
@@ -79,6 +89,10 @@ def explore():
     elif location == "3":
         won = cross_bridge()
         return won 
+
+    elif location == "4":
+        print("\nYou are exploring the Cave.")
+        collect_rope()    
 
     else:
         print("Invalid location!")
