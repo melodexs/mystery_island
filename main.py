@@ -77,7 +77,13 @@ def collect_map():
         inventory.append("map")
 
     print("Your inventory:", inventory)
-    
+
+def cross_path():
+    if "rope" in inventory:
+        print("You use the rope to cross the dangerous path!")
+    else:
+        print("The path is too dangerous! You need a rope.")
+
 def explore():
     print("\nWhere would you like to explore?")
     print("1. Beach")
@@ -102,7 +108,12 @@ def explore():
 
     elif location == "4":
         print("\nYou are exploring the Cave.")
-        collect_rope()    
+        collect_rope()
+        cross_path()
+
+    elif location == "5":
+        print("\nYou are exploring the Mountain.")
+        collect_map()    
 
     else:
         print("Invalid location!")
