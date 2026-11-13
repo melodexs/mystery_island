@@ -69,12 +69,22 @@ def collect_rope():
 
     print("Your inventory:", inventory)
 
+def collect_map():
+    if "map" in inventory:
+        print("You already have a map!")
+    else:
+        print("You found an old map!")
+        inventory.append("map")
+
+    print("Your inventory:", inventory)
+    
 def explore():
     print("\nWhere would you like to explore?")
     print("1. Beach")
     print("2. Jungle")
     print("3. Bridge")
     print("4. Cave")
+    print("5. Mountain")
 
     location = input("Choose a location: ")
 
