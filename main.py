@@ -9,21 +9,22 @@ def display_introduction():
         print(".",end="",flush=True)
         time.sleep(1)
     print("\nwelcome to mystery island")
-
-def creat_player():
-    while True:
+def player_name():
+  while True:
         name = input("what is your name? ").strip()
         if name == "":
             print("name must not be empty try again ")
             continue 
-        return name
+        return name    
+
+def creat_player(name):
     player = {
         "name": name,
         "energy": 5,
         "location": "Beach",
         "inventory": [],
         "raining": False,
-        "temperature" 20
+        "temperature": 20
     }
     return player
 
@@ -36,7 +37,19 @@ def update_weather(player):
         player["raining"] = True   
 
 def display_weather(player):
-    print(f"temperature{player["temperature"]}°C")           
+    print(f"Temperature: {player['temperature']}°C")
+    if player["raining"]:
+       print("It is raining. You can't move!")
+    else:
+        print("the weather is clear ")
+
+def monkey():
+    display_introduction()
+    name = player_name()
+    player = creat_player(name)
+    update_weather(player)
+    display_weather(player)
+monkey()    
 
 
 def show_menu():
