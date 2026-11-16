@@ -43,7 +43,7 @@ def display_weather(player):
     else:
         print("the weather is clear ")
 
-def monkey():
+def setup_game():
     display_introduction()
     name = player_name()
     player = creat_player(name)
