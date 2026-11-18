@@ -250,7 +250,7 @@ def main():
         should_continue = run_game(player)
         if not should_continue:
             print("Goodbye!")
-            breake
+            break
 
 
 if __name__ == "__main__":
