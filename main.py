@@ -147,53 +147,53 @@ def apply_action(player, action):
     if player["game_over"]:
         return "The game is already over. Start a new game to play again."
 
-    command = action.strip().lower()
+    instruction = action.strip().lower()
 
-    if command in {"quit", "exit", "q"}:
+    if instruction in {"quit", "exit", "q"}:
         player["game_over"] = True
         return "You decide to quit the island adventure."
 
-    if command in {"inventory", "inv", "items"}:
+    if instruction in {"inventory", "inv", "items"}:
         display_inventory(player)
         return "Inventory checked."
 
-    if command in {"move beach", "go beach", "travel beach", "beach"}:
+    if instruction in {"move beach", "go beach", "travel beach", "beach"}:
         success, message = move_player(player, "Beach")
         return message
 
-    if command in {"move jungle", "go jungle", "travel jungle", "jungle"}:
+    if instruction in {"move jungle", "go jungle", "travel jungle", "jungle"}:
         success, message = move_player(player, "Jungle")
         return message
 
-    if command in {"move cave", "go cave", "travel cave", "cave"}:
+    if instruction in {"move cave", "go cave", "travel cave", "cave"}:
         success, message = move_player(player, "Cave")
         return message
 
-    if command in {"move bridge", "go bridge", "travel bridge", "old bridge", "bridge"}:
+    if instruction in {"move bridge", "go bridge", "travel bridge", "old bridge", "bridge"}:
         success, message = move_player(player, "Old Bridge")
         return message
 
-    if command in {"move lighthouse", "go lighthouse", "travel lighthouse", "lighthouse"}:
+    if instruction in {"move lighthouse", "go lighthouse", "travel lighthouse", "lighthouse"}:
         success, message = move_player(player, "Lighthouse")
         return message
 
-    if command in {"collect rope", "pick rope"}:
+    if instruction in {"collect rope", "pick rope"}:
         success, message = collect_item(player, "rope")
         return message
 
-    if command in {"collect lantern", "pick lantern"}:
+    if instruction in {"collect lantern", "pick lantern"}:
         success, message = collect_item(player, "lantern")
         return message
 
-    if command in {"cross bridge", "cross"}:
+    if instruction in {"cross bridge", "cross"}:
         success, message = cross_bridge(player)
         return message
 
-    if command in {"light beacon", "light"}:
+    if instruction in {"light beacon", "light"}:
         success, message = light_beacon(player)
         return message
 
-    if command in {"help", "menu", "actions"}:
+    if instruction in {"help", "menu", "actions"}:
         return "Actions: " + ", ".join(available_actions(player))
 
     return "Invalid choice. Try again."
