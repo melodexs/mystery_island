@@ -60,3 +60,14 @@ Run it:
     python3 -m http.server 8000
 
 Then open http://localhost:8000. One rule change from the terminal game: the Lighthouse can only be entered by crossing the bridge (the `move lighthouse` shortcut is closed in the web version).
+
+### Characters (web version)
+
+Pick one of four survivors before you start:
+
+| Survivor | Energy | Perk |
+|---|---|---|
+| The Castaway | 5 | Balanced |
+| The Explorer | 5 | First visit to each new place is free |
+| The Old Sailor | 6 | Hardy, but crossing the bridge costs 1 energy |
+| The Scavenger | 4 | Picking up an item restores 1 energy |

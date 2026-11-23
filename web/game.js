@@ -35,16 +35,44 @@ const SCENES = {
   },
 };
 
-const MAX_ENERGY = 5;
+const CHARACTERS = {
+  castaway: {
+    title: "The Castaway", img: "img/castaway.jpg", energy: 5,
+    blurb: "Rugged and steady. No tricks, no weaknesses.",
+    perk: "Balanced: 5 energy.",
+  },
+  explorer: {
+    title: "The Explorer", img: "img/explorer.jpg", energy: 5,
+    blurb: "Sharp-eyed and quick on her feet.",
+    perk: "Scout: the first visit to each new place costs no energy.",
+  },
+  sailor: {
+    title: "The Old Sailor", img: "img/sailor.jpg", energy: 6,
+    blurb: "Tough and weathered, but slow on old planks.",
+    perk: "Hardy: 6 energy. Slow: crossing the bridge costs 1.",
+  },
+  scavenger: {
+    title: "The Scavenger", img: "img/scavenger.jpg", energy: 4,
+    blurb: "Small, clever, always finding something.",
+    perk: "Resourceful: picking up an item restores 1 energy. Only 4 energy.",
+  },
+};
+
+const MAX_PIPS = 6;
 let player = null;
+let chosen = null;
 
 const $ = (id) => document.getElementById(id);
 
-function newGame(name) {
+function newGame(name, character = "castaway") {
+  const c = CHARACTERS[character] || CHARACTERS.castaway;
   return {
     name: name || "Player",
+    character,
+    maxEnergy: c.energy,
+    visited: ["Beach"],
     location: "Beach",
-    energy: MAX_ENERGY,
+    energy: c.energy,
     inventory: [],
     won: false,
     gameOver: false,
@@ -58,7 +86,14 @@ function movePlayer(p, dest) {
   if (!(VALID_MOVES[p.location] || []).includes(dest))
     return [false, `You cannot travel to ${dest} from ${p.location}.`];
 
+  const firstVisit = !p.visited.includes(dest);
   p.location = dest;
+  if (!p.visited.includes(dest)) p.visited.push(dest);
+
+  if (p.character === "explorer" && firstVisit) {
+    return [true, `You scout ahead to ${dest} without tiring. Energy left: ${p.energy}`];
+  }
+
   p.energy -= 1;
 
   if (p.energy <= 0) {
@@ -75,6 +110,10 @@ function collectItem(p) {
   if (!item) return [false, "There is nothing useful to collect here."];
   if (p.inventory.includes(item)) return [false, `You already have the ${item}.`];
   p.inventory.push(item);
+  if (p.character === "scavenger" && p.energy < p.maxEnergy) {
+    p.energy += 1;
+    return [true, `You found the ${item}! Scavenger's luck: +1 energy (${p.energy}).`];
+  }
   return [true, `You found the ${item}!`];
 }
 
@@ -84,6 +123,16 @@ function crossBridge(p) {
   if (!p.inventory.includes("rope"))
     return [false, "The bridge is locked. You need a rope before you can cross."];
   p.location = "Lighthouse";
+  if (!p.visited.includes("Lighthouse")) p.visited.push("Lighthouse");
+  if (p.character === "sailor") {
+    p.energy -= 1;
+    if (p.energy <= 0) {
+      p.energy = 0;
+      p.gameOver = true;
+      return [true, "The old planks wear you out. You reach the lighthouse, but your energy is gone."];
+    }
+    return [true, `You cross slowly, step by step. Energy left: ${p.energy}`];
+  }
   return [true, "You cross the old bridge and reach the lighthouse."];
 }
 
@@ -132,7 +181,8 @@ function setBg(el, url) {
 function render(message, ok = true) {
   const scene = SCENES[player.location];
   setBg($("scene"), scene.img);
-  $("hud-name").textContent = player.name;
+  $("hud-name").textContent = `${player.name} (${CHARACTERS[player.character].title})`;
+  $("hud-face").src = CHARACTERS[player.character].img;
   $("hud-loc").textContent = player.location;
   $("description").textContent = scene.text;
 
@@ -143,7 +193,7 @@ function render(message, ok = true) {
   // energy pips
   const en = $("energy");
   en.innerHTML = "";
-  for (let i = 0; i < MAX_ENERGY; i++) {
+  for (let i = 0; i < player.maxEnergy; i++) {
     const pip = document.createElement("span");
     pip.className = "pip" + (i < player.energy ? " full" : "");
     en.appendChild(pip);
@@ -215,15 +265,48 @@ function endGame() {
 
 /* ---- wiring ---- */
 
+function buildCards() {
+  const box = $("cards");
+  box.innerHTML = "";
+  Object.entries(CHARACTERS).forEach(([key, c]) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "card";
+    card.dataset.key = key;
+    card.innerHTML =
+      `<img src="${c.img}" alt="${c.title}">` +
+      `<span class="c-title">${c.title}</span>` +
+      `<span class="c-blurb">${c.blurb}</span>` +
+      `<span class="c-perk">${c.perk}</span>`;
+    card.addEventListener("click", () => pick(key));
+    box.appendChild(card);
+  });
+}
+
+function pick(key) {
+  chosen = key;
+  document.querySelectorAll(".card").forEach((c) =>
+    c.classList.toggle("sel", c.dataset.key === key));
+  $("begin").disabled = false;
+}
+
+$("start").addEventListener("click", () => {
+  chosen = null;
+  $("begin").disabled = true;
+  buildCards();
+  show("screen-select");
+});
+
 $("name-form").addEventListener("submit", (e) => {
   e.preventDefault();
+  if (!chosen) return;
   const name = $("name-input").value.trim();
   if (!name) {
     $("name-error").hidden = false;
     return;
   }
   $("name-error").hidden = true;
-  player = newGame(name);
+  player = newGame(name, chosen);
   show("screen-game");
   render("");
 });
@@ -236,12 +319,12 @@ $("quit").addEventListener("click", () => {
 $("again").addEventListener("click", () => {
   $("name-input").value = "";
   show("screen-title");
-  $("name-input").focus();
 });
 
 // preload art
 Object.values(SCENES).forEach((s) => { new Image().src = s.img; });
 new Image().src = "img/title.jpg";
+Object.values(CHARACTERS).forEach((c) => { new Image().src = c.img; });
 
 /* expose for tests */
 if (typeof module !== "undefined") {

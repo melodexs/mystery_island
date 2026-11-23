@@ -17,9 +17,20 @@
     <div class="title-box">
       <h1>MYSTERY ISLAND</h1>
       <p class="tag">A dark lighthouse. A broken bridge. One chance at rescue.</p>
+      <button id="start" class="btn primary big">Choose your survivor</button>
+    </div>
+  </section>
+
+  <!-- CHARACTER SELECT -->
+  <section id="screen-select" class="screen">
+    <div class="bg" style="background-image:url('img/beach.jpg')"></div>
+    <div class="shade heavy"></div>
+    <div class="select-box">
+      <h2>Choose your survivor</h2>
+      <div id="cards" class="cards"></div>
       <form id="name-form">
-        <input id="name-input" type="text" maxlength="20" placeholder="Enter your name" autocomplete="off">
-        <button type="submit" class="btn primary">Begin</button>
+        <input id="name-input" type="text" maxlength="20" placeholder="Name your survivor" autocomplete="off">
+        <button type="submit" class="btn primary" id="begin" disabled>Begin</button>
       </form>
       <p id="name-error" class="error" hidden>Name must not be empty. Try again.</p>
     </div>
@@ -32,7 +43,7 @@
 
     <header class="hud">
       <div class="hud-left">
-        <span id="hud-name"></span>
+        <span class="who"><img id="hud-face" alt=""><span id="hud-name"></span></span>
         <span id="hud-loc" class="loc"></span>
       </div>
       <div class="hud-mid">
