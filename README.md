@@ -49,3 +49,14 @@ python3 -m unittest discover -s tests -v
 ## Learning notes
 
 This project uses a dictionary-based player state and simple functions to separate game rules from terminal input. This keeps the game logic easy to test.
+
+## Web version
+
+A graphical browser version lives in `web/`. It uses the same rules as `main.py` with scene art for each location.
+
+Run it:
+
+    cd web
+    python3 -m http.server 8000
+
+Then open http://localhost:8000. One rule change from the terminal game: the Lighthouse can only be entered by crossing the bridge (the `move lighthouse` shortcut is closed in the web version).
