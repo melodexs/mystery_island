@@ -84,3 +84,12 @@ The web version is a side-scrolling adventure through one long painted island, f
 Survivors: Castaway (balanced), Explorer (faster, jumps higher, tires slower), Old Sailor (6 energy, bridge repair costs 1), Scavenger (4 energy, pickups restore 1).
 
 Files: `web/world.js` (physics, level and rules, no browser code), `web/main.js` (drawing, animation, input, sound).
+
+
+## Third-person 3D rebuild
+
+The browser build is an exploration-first, third-person 3D experience. The current overhaul adds rigged operator characters with idle, walk and run animation clips, a closer over-the-shoulder camera, higher-quality real-time shadows, denser island foliage, storm rain and lightning, and a refreshed field-operations interface.
+
+The operator GLB files are supplied by the Gobkit Free Character Pack Vol.22 and are released under CC0 1.0. They are game-ready stylized/low-poly characters, not photorealistic scans or Call of Duty assets. The browser loads these models from the provider's public asset URLs at runtime.
+
+Run the web version from the `web/` folder with a local HTTP server. A modern browser with WebGL support and an internet connection is required for the Three.js modules and external operator models.
