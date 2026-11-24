@@ -39,8 +39,26 @@
     const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
     src.buffer = buf; src.loop = true; f.type = "lowpass"; f.frequency.value = 500; g.gain.value = 0;
     src.connect(f); f.connect(g); g.connect(a.destination); src.start(); amb = { f, g };
+    // a second, lower bed for the chasm water: its loudness follows how close you are, and it is panned toward the side the water is on
+    const ws = a.createBufferSource(), wf = a.createBiquadFilter(), wg = a.createGain(), wp = a.createStereoPanner ? a.createStereoPanner() : null;
+    ws.buffer = buf; ws.loop = true; ws.playbackRate.value = 0.7; wf.type = "lowpass"; wf.frequency.value = 380; wg.gain.value = 0;
+    ws.connect(wf); wf.connect(wg); if (wp) { wg.connect(wp); wp.connect(a.destination); } else wg.connect(a.destination); ws.start(); amb.water = { g: wg, p: wp, f: wf };
   }
-  function updateAmbience(speedFx) { if (!amb || !actx) return; const t = actx.currentTime; amb.g.gain.setTargetAtTime(muted ? 0 : 0.035 + speedFx * 0.05, t, 0.2); amb.f.frequency.setTargetAtTime(500 + speedFx * 900, t, 0.2); }
+  function updateAmbience(speedFx) {
+    if (!amb || !actx) return; const t = actx.currentTime;
+    // the cave (x 1500..2500) closes the sky in: the wind bed goes darker and quieter, and softens again in the open
+    const inCave = game && game.x > 1500 && game.x < 2500; const open = game && game.x < 1500 ? 1 : 0.7;
+    amb.g.gain.setTargetAtTime(muted ? 0 : (0.035 + speedFx * 0.05) * (inCave ? 0.55 : open), t, 0.3);
+    amb.f.frequency.setTargetAtTime((inCave ? 260 : 380) + speedFx * 380, t, 0.3);
+    // the water: loudest at the lip of the chasm, fading out over ~900 units, panned left or right of you; muffled while you are underwater
+    if (amb.water && game) {
+      const mid = (WATER.x0 + WATER.x1) / 2, dx = mid - game.x, edgeDist = Math.max(0, Math.abs(dx) - (WATER.x1 - WATER.x0) / 2);
+      const near = Math.max(0, 1 - edgeDist / 900), vol = muted ? 0 : near * near * 0.16 * (game.submerged ? 0.4 : 1);
+      amb.water.g.gain.setTargetAtTime(vol, t, 0.25);
+      if (amb.water.p) amb.water.p.pan.setTargetAtTime(Math.max(-0.85, Math.min(0.85, dx / 700)), t, 0.2);
+      amb.water.f.frequency.setTargetAtTime(game.submerged ? 160 : 380 + near * 300, t, 0.25);
+    }
+  }
   const SFX = {
     jump:   () => beep(300, .14, "triangle", .05, 260),
     land:   () => noise(.12, 500, .18),
