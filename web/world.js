@@ -21,6 +21,9 @@ const ROLL_TIME = 0.55, ROLL_SPEED = 1.15;   // a roll after a hard landing keep
 const HANG_MIN = 70, HANG_MAX = 200;  // ledge top this far above the feet can be grabbed
 const CLIMB_TIME = 0.5;               // seconds to pull up from a hang
 const VAULT_TIME = 0.32;              // seconds a vault over a low block takes
+const WATER = { x0: 2830, x1: 3290, surface: 935, floor: 1180 };   // the dark water in the chasm
+const SWIM_SPEED = 0.62, SWIM_DIVE = 330, BUOYANCY = 1900, WATER_DRAG = 3.2;
+const BREATH_MAX = 6, BREATH_RECOVER = 3;     // seconds of air underwater, recovery rate multiplier
 const SPRINT_DRAIN = 1.25;            // sprinting tires you a bit faster than jogging
 
 const CHARACTERS = {
@@ -71,6 +74,7 @@ class Game {
     this.wall = 0;                                   // -1 left wall, 1 right wall, 0 none
     this.wallJumpLock = 0;                           // brief lock on steering after a wall-jump
     this.airJumpUsed = false;                        // double jump spent
+    this.inWater = false; this.submerged = false; this.chilled = false; this.breath = BREATH_MAX; this.splashes = []; this.swimTime = 0; this.drownWarned = false;
     this.rolling = 0; this.rollDir = 1;              // roll timer
     this.hang = null;                                // {p, side, t}: grabbing a ledge
     this.climbing = 0; this.climbTo = null;          // pull-up timer and destination
@@ -130,7 +134,7 @@ class Game {
     }
     // --- pull-up: a scripted, smooth move from the hang to the top of the block ---
     if (this.climbing > 0) {
-      this.climbing -= dt; const k = 1 - Math.max(0, this.climbing) / CLIMB_TIME, e = k * k * (3 - 2 * k);
+      this.climbing -= dt; const k = 1 - Math.max(0, this.climbing) / (this.climbLen || CLIMB_TIME), e = k * k * (3 - 2 * k);
       this.x = this.climbFrom.x + (this.climbTo.x - this.climbFrom.x) * e;
       this.y = this.climbFrom.y + (this.climbTo.y - this.climbFrom.y) * (k < 0.6 ? Math.pow(k / 0.6, 1.4) * 0.92 : 0.92 + (k - 0.6) / 0.4 * 0.08);
       this.vx = 0; this.vy = 0;
@@ -146,6 +150,9 @@ class Game {
       return;
     }
     this.rolling = Math.max(0, this.rolling - dt);
+
+    // --- water: the chasm is dark water. Buoyancy, drag, swimming, diving, breath. The bridge, once repaired, is solid above it. ---
+    if (this.waterUpdate(dt, input)) return;
 
     const c = this.c; let dir = input.dir || 0;
     this.slideCd = Math.max(0, this.slideCd - dt); this.wallJumpLock = Math.max(0, this.wallJumpLock - dt);
@@ -284,6 +291,73 @@ class Game {
     for (let i = this.checkpoint + 1; i < CHECKPOINTS.length; i++) if (this.x >= CHECKPOINTS[i].x) this.checkpoint = i;
   }
 
+  /* is this point inside the water volume? (the repaired bridge deck still counts as air above it) */
+  inWaterAt(x, y) { return x > WATER.x0 && x < WATER.x1 && y > WATER.surface && y < WATER.floor; }
+
+  /* swimming physics. Returns true when it has fully handled this step. */
+  waterUpdate(dt, input) {
+    const wasIn = this.inWater;
+    const feetIn = wasIn ? (this.x > WATER.x0 - 30 && this.x < WATER.x1 + 30 && this.y > WATER.surface - 30 && this.y < WATER.floor) : this.inWaterAt(this.x, this.y);
+    const standingOnBridge = this.bridgeRepaired && this.onGround && this.y <= GROUND_Y + 1;
+    if (!feetIn || standingOnBridge) {
+      if (wasIn) { this.inWater = false; this.submerged = false; this.events.push("exitwater"); }
+      if (this.onGround && !this.inWater) this.chilled = false;                 // dry again: the next swim is cold again
+      this.breath = Math.min(BREATH_MAX, this.breath + dt * BREATH_RECOVER);
+      return false;
+    }
+    const c = this.c;
+    if (!wasIn) {                                              // splash on entry, sized by how hard you hit
+      this.inWater = true; this.onGround = false; this.sliding = 0; this.rolling = 0; this.crouching = false;
+      const hit = Math.min(1, Math.abs(this.vy) / 1200); this.splashes.push({ x: this.x, y: WATER.surface, t: 0, k: 0.4 + hit });
+      this.vy *= 0.35; this.events.push("splash"); this.airJumpUsed = false;
+      if (!this.chilled) { this.chilled = true; this.spend(1, "The dark water is bitterly cold and it drains you."); }       // swimming the chasm is possible but costs energy, so the rope still matters
+      if (this.over) return true;
+    }
+    const head = this.y - PLAYER_H * 0.78;                     // the head is near the top of the box
+    this.submerged = head > WATER.surface;
+    const dir = input.dir || 0;
+    // horizontal: swim, with strong drag
+    const target = dir * c.run * SWIM_SPEED * (input.sprint ? 1.25 : 1);
+    this.vx += (target - this.vx) * Math.min(1, dt * 4.5);
+    if (dir !== 0) this.facing = dir;
+    // vertical: buoyancy floats you up, dive pulls you down, jump kicks up
+    let ay = -BUOYANCY * (this.submerged ? 1 : 0.55) * 0.0 + 0;
+    const floatY = WATER.surface + PLAYER_H * 0.62;            // resting depth: shoulders at the surface
+    const wantDive = !!(input.crouch || input.slide);
+    let targetVy = wantDive ? SWIM_DIVE : (input.jumpHeld ? -SWIM_DIVE * 0.9 : (floatY - this.y) * 2.2);
+    targetVy = Math.max(-380, Math.min(380, targetVy));
+    this.vy += (targetVy - this.vy) * Math.min(1, dt * 5);
+    this.x += this.vx * dt; this.y += this.vy * dt;
+    this.y = Math.min(this.y, WATER.floor - 4);
+    // holding 'up' brings you to the surface and holds you there: you cannot launch yourself out of the water by swimming
+    const topY = WATER.surface + PLAYER_H * 0.5;
+    if (this.y < topY) { this.y = topY; if (this.vy < 0) this.vy = 0; }
+    // swimming ripples and strokes
+    this.swimTime += dt * (0.4 + Math.abs(this.vx) / 160);
+    if (Math.abs(this.vx) > 40 && Math.floor(this.swimTime * 2) !== Math.floor((this.swimTime - dt * (0.4 + Math.abs(this.vx) / 160)) * 2) && !this.submerged) this.splashes.push({ x: this.x, y: WATER.surface, t: 0, k: 0.25 });
+    this.splashes.forEach((p) => (p.t += dt)); this.splashes = this.splashes.filter((p) => p.t < 0.9);
+    // breath
+    if (this.submerged) {
+      this.breath -= dt;
+      if (this.breath < 2 && !this.drownWarned) { this.say("You are running out of air!", 2.4); this.drownWarned = true; this.events.push("breath"); }
+      if (this.breath <= 0) { this.breath = BREATH_MAX; this.drownWarned = false; this.spend(1, "You gasp for air and swim to the bank."); if (!this.over) { this.x = this.x < (WATER.x0 + WATER.x1) / 2 ? WATER.x0 - 60 : WATER.x1 + 60; this.y = GROUND_Y; this.vx = 0; this.vy = 0; this.inWater = false; this.submerged = false; this.onGround = true; } }
+    } else { this.breath = Math.min(BREATH_MAX, this.breath + dt * BREATH_RECOVER * 2); if (this.breath > 3) this.drownWarned = false; }
+    // climb out: reach the bank wall (the swimmer's hands are at the edge), then pull up over it with the same smooth climb as a ledge
+    for (const bank of [{ x: WATER.x0, dir: -1 }, { x: WATER.x1, dir: 1 }]) {
+      const reach = bank.dir > 0 ? (this.x + PLAYER_W / 2) - bank.x : bank.x - (this.x - PLAYER_W / 2);   // how far the body has pushed into the wall
+      if (reach > -4 && dir === bank.dir && this.y < WATER.surface + PLAYER_H * 0.95) {      // hands on the bank, head not too deep
+        this.inWater = false; this.submerged = false; this.vx = 0; this.vy = 0;
+        this.climbFrom = { x: this.x, y: this.y }; this.climbTo = { x: bank.x + bank.dir * (PLAYER_W / 2 + 14), y: GROUND_Y }; this.climbing = CLIMB_TIME * 1.15; this.climbLen = CLIMB_TIME * 1.15; this.hang = null;
+        this.events.push("climbout"); this.dust.push({ x: bank.x, y: WATER.surface, t: 0 });
+        return true;
+      }
+    }
+    // keep the swimmer in the channel: the bank faces are solid below the surface
+    if (this.y > WATER.surface) { this.x = Math.max(WATER.x0 + PLAYER_W / 2 - 22, Math.min(WATER.x1 - PLAYER_W / 2 + 22, this.x)); }
+    this.runTime = 0; this.speedFx = 0;
+    return true;
+  }
+
   /* nearest raised block whose near edge is in front of us and whose top is within a vertical window above the feet */
   ledgeAhead(dir, minRise, maxRise) {
     if (!dir) return null;
@@ -306,7 +380,7 @@ class Game {
   /* pull up from a hang onto the top of the block */
   startClimb() {
     const h = this.hang; if (!h) return;
-    this.climbing = CLIMB_TIME; this.climbFrom = { x: this.x, y: this.y };
+    this.climbing = CLIMB_TIME; this.climbLen = CLIMB_TIME; this.climbFrom = { x: this.x, y: this.y };
     this.climbTo = { x: h.side > 0 ? h.p.x + PLAYER_W / 2 + 10 : h.p.x + h.p.w - PLAYER_W / 2 - 10, y: h.p.y };
     this.hang = null; this.events.push("climb");
   }
@@ -367,4 +441,5 @@ class Game {
   }
 }
 
+if (typeof window !== "undefined") { window.WATER = WATER; window.BREATH_MAX = BREATH_MAX; }
 if (typeof module !== "undefined") module.exports = { Game, CHARACTERS, PLATFORMS, BRIDGE, OBJECTS, START, CHECKPOINTS, WORLD_W, WORLD_H, GROUND_Y, GRAVITY, PLAYER_W, PLAYER_H, KILL_Y, CROUCH_H, SPRINT_MUL, SLIDE_SPEED, SLIDE_TIME };

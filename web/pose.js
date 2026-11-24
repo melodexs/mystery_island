@@ -30,6 +30,7 @@
       // ---- pick the state ----
       let st = "idle";
       if (g.over && !g.won) st = "collapse";
+      else if (g.inWater) st = g.submerged ? "dive" : "swim";
       else if (g.hang) st = "hang";
       else if (g.climbing > 0) st = "climbup";
       else if (g.vaulting > 0) st = "vault";
@@ -65,6 +66,8 @@
         case "crouchwalk": t.sy = 0.74 + step * 0.015; t.sx = 1.08; t.lean = 0.14; t.bob = step * 4; t.sway = side * 0.02; break;
         case "slide": t.sy = 0.62; t.sx = 1.18; t.lean = -0.5; t.drop = -2; break;     // leaning back with the feet forward
         case "wall": t.lean = g.wall * 0.2; t.sy = 1.03; t.sx = 0.98; t.sway = Math.sin(this.time * 9) * 0.012; break;
+        case "swim": { const s = Math.sin(this.time * (3 + Math.abs(g.vx) / 90)); t.sy = 0.94; t.sx = 1.04; t.lean = 0.36 * (Math.abs(g.vx) > 20 ? 1 : 0.4) + s * 0.04; t.bob = 0; t.lift = 0; t.drop = 0 + s * 3; t.sway = s * 0.03; break; }      // body tilted forward, rocking with the stroke
+        case "dive": { const s = Math.sin(this.time * 4); t.sy = 0.9; t.sx = 1.06; t.lean = 1.1 + s * 0.05; t.drop = s * 3; break; }                  // head down, stroking
         case "hang": { const b = Math.sin(this.time * 3.1); t.sy = 1.12 + b * 0.012; t.sx = 0.9; t.lean = -0.04 + b * 0.012; t.lift = 8; t.sway = Math.sin(this.time * 2.3) * 0.02; break; }   // stretched by the arms, hanging
         case "climbup": { const k = 1 - g.climbing / CLIMB_TIME; t.sy = 1.06 - 0.3 * Math.sin(k * Math.PI); t.sx = 0.96 + 0.1 * Math.sin(k * Math.PI); t.lean = 0.28 * Math.sin(k * Math.PI); t.lift = 4; break; }
         case "vault": { const k = 1 - g.vaulting / VAULT_TIME; t.sy = 0.86 + 0.1 * k; t.sx = 1.1 - 0.06 * k; t.lean = 0.3 - 0.35 * k; t.lift = 3; break; }
