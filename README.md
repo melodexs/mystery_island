@@ -71,3 +71,14 @@ Pick one of four survivors before you start:
 | The Explorer | 5 | First visit to each new place is free |
 | The Old Sailor | 6 | Hardy, but crossing the bridge costs 1 energy |
 | The Scavenger | 4 | Picking up an item restores 1 energy |
+
+## Illustrated adventure (web)
+
+The web version is a painted point-and-click adventure. It opens on a boat in a storm, then you land on the beach and walk the island as your chosen survivor.
+
+- **Walk:** A / D or arrow keys, the on-screen arrows on a phone, or tap the painting to walk there.
+- **Use:** E or Space, the Use button, or tap the glowing object.
+- **Goal:** take the rope (jungle) and the lantern (cave), repair the old bridge, then light the beacon at the lighthouse.
+- **Energy:** walking tires you. The best route costs about 3 energy, so a short detour is fine but wandering loses.
+
+Files: `story.js` (scenes and survivors), `rules.js` (game rules, no browser code), `main.js` (drawing, input, sound).

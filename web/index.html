@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Mystery Island</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ctext y=%2726%27 font-size=%2728%27%3E%F0%9F%97%BC%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -10,7 +10,7 @@
 <body>
 <main id="app">
 
-  <!-- TITLE SCREEN -->
+  <!-- TITLE -->
   <section id="screen-title" class="screen active">
     <div class="bg" style="background-image:url('img/title.jpg')"></div>
     <div class="shade"></div>
@@ -23,23 +23,41 @@
 
   <!-- CHARACTER SELECT -->
   <section id="screen-select" class="screen">
-    <div class="bg" style="background-image:url('img/beach.jpg')"></div>
+    <div class="bg" style="background-image:url('img/scene_beach.jpg')"></div>
     <div class="shade heavy"></div>
     <div class="select-box">
       <h2>Choose your survivor</h2>
       <div id="cards" class="cards"></div>
       <form id="name-form">
         <input id="name-input" type="text" maxlength="20" placeholder="Name your survivor" autocomplete="off">
-        <button type="submit" class="btn primary" id="begin" disabled>Begin</button>
+        <button type="submit" class="btn primary" id="begin" disabled>Set sail</button>
       </form>
       <p id="name-error" class="error" hidden>Name must not be empty. Try again.</p>
     </div>
   </section>
 
-  <!-- GAME SCREEN -->
-  <section id="screen-game" class="screen">
-    <div id="scene" class="bg"></div>
+  <!-- BOAT OPENING -->
+  <section id="screen-boat" class="screen">
+    <div id="boat-bg" class="bg boat-bg"></div>
     <div class="shade"></div>
+    <div class="lightning" id="boat-bolt"></div>
+    <div class="story">
+      <p id="story-text"></p>
+      <button id="story-next" class="btn primary">Continue</button>
+    </div>
+    <button id="story-skip" class="btn ghost small skip">Skip</button>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen">
+    <div id="stage" class="stage">
+      <div id="scene-bg" class="bg scene-bg"></div>
+      <div id="hotspots" class="hotspots"></div>
+      <img id="figure" class="figure" alt="">
+      <div class="lightning" id="bolt"></div>
+      <canvas id="rain"></canvas>
+    </div>
+    <div class="shade soft"></div>
 
     <header class="hud">
       <div class="hud-left">
@@ -56,17 +74,22 @@
       </div>
     </header>
 
-    <div id="flash" class="flash"></div>
+    <div id="goal" class="goal"></div>
+    <div id="message" class="toast"></div>
+    <div id="prompt" class="prompt"></div>
 
-    <footer class="panel">
-      <p id="description" class="desc"></p>
-      <p id="message" class="msg"></p>
-      <div id="actions" class="actions"></div>
-      <button id="quit" class="btn ghost small">Quit</button>
-    </footer>
+    <button id="arrow-l" class="edge-btn left" aria-label="Walk left">&#8249;</button>
+    <button id="arrow-r" class="edge-btn right" aria-label="Walk right">&#8250;</button>
+    <button id="act" class="act" type="button">Use</button>
+
+    <div class="corner">
+      <button id="mute" class="btn ghost small" type="button">Sound on</button>
+      <button id="quit" class="btn ghost small" type="button">Quit</button>
+    </div>
+    <p class="keys">Walk: A / D or arrows &nbsp;&middot;&nbsp; Use: E or Space &nbsp;&middot;&nbsp; Or tap the scene</p>
   </section>
 
-  <!-- END SCREEN -->
+  <!-- END -->
   <section id="screen-end" class="screen">
     <div id="end-bg" class="bg"></div>
     <div class="shade heavy"></div>
@@ -78,6 +101,8 @@
   </section>
 
 </main>
-<script src="game.js"></script>
+<script src="story.js"></script>
+<script src="rules.js"></script>
+<script src="main.js"></script>
 </body>
 </html>
