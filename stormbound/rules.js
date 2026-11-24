@@ -9,8 +9,8 @@
   };
   const MAX_HEALTH = 5, MAX_STAMINA = 100;
   const FALL_SAFE = 5.5, FALL_PER_HEART = 4;          // metres: safe drop, then one heart per extra 4 m
-  const COLD_RATE = 0.16;                              // warmth lost per second when exposed (0..1 scale, 1 = warm)
-  const WARM_RATE = 0.35;                              // warmth regained per second in shelter / near lit generator
+  const COLD_RATE = 0.05;                              // warmth lost per second when exposed (0..1 scale, 1 = warm)
+  const WARM_RATE = 0.12;                              // warmth regained per second in shelter / near lit generator
   const GUST_PERIOD = 22, GUST_LEN = 7;                // storm gust every 22 s, lasting 7 s
 
   /* sequential objectives */
@@ -18,7 +18,7 @@
     { id: "rope",   title: "Find the rope in the jungle",              hint: "Search the overgrown ruins in the jungle." },
     { id: "cliff",  title: "Scale the cliffside to the keeper's cabin", hint: "Use the rope at the cliff anchor, then search the cabin." },
     { id: "power",  title: "Restore power at the generator shed",       hint: "Find 2 fuel canisters, then refuel the generator." },
-    { id: "beacon", title: "Bring the lighthouse beacon back to life",  hint: "Unlock the lighthouse, climb to the top, and light the beacon." }
+    { id: "beacon", title: "Bring the lighthouse beacon back to life",  hint: "The lighthouse stands on the cliff top. Use the rope again to climb back up, unlock the door, and light the lamp." }
   ];
 
   class Game {
@@ -56,15 +56,29 @@
     }
     hurt(h, why) { if (this.over) return; this.health = Math.max(0, this.health - h); this.say(why || "Ouch."); if (this.health <= 0) { this.over = true; this.won = false; this.say("The island wins this time. Your strength gives out."); } }
 
+    /* checkpoint: a small plain-JSON snapshot of progress. Restoring never revives a finished or dead run. */
+    snapshot() { return { v: 1, key: this.key, health: this.health, stamina: this.stamina, warmth: this.warmth, inv: { ...this.inv }, flags: { ...this.flags }, fuelFound: { ...this.fuelFound }, time: this.time }; }
+    static restore(d) {
+      if (!d || d.v !== 1 || !SURVIVORS[d.key]) return null;
+      const g = new Game(d.key), num = (v, lo, hi, dflt) => (typeof v === "number" && isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
+      g.health = Math.max(1, num(d.health, 1, MAX_HEALTH, MAX_HEALTH)); g.stamina = num(d.stamina, 0, MAX_STAMINA, MAX_STAMINA); g.warmth = num(d.warmth, 0, 1, 1); g.time = num(d.time, 0, 1e7, 0);
+      for (const k of Object.keys(g.inv)) if (d.inv && k in d.inv) g.inv[k] = k === "fuel" ? Math.min(2, Math.max(0, d.inv[k] | 0)) : !!d.inv[k];
+      for (const k of Object.keys(g.flags)) if (d.flags && k in d.flags) g.flags[k] = !!d.flags[k];
+      for (const k of Object.keys(g.fuelFound)) if (d.fuelFound && k in d.fuelFound) g.fuelFound[k] = !!d.fuelFound[k];
+      if (g.flags.beaconOn) return null;                    // a completed run is not resumable: it becomes a replay prompt instead
+      return g;
+    }
+
     /* is a storm gust blowing at time t (seconds)? */
     static gust(t) { const p = t % GUST_PERIOD; return p > GUST_PERIOD - GUST_LEN ? Math.sin((p - (GUST_PERIOD - GUST_LEN)) / GUST_LEN * Math.PI) : 0; }
     /* cold: exposed to a gust without shelter drains warmth; at zero, hearts start to go. Sheltered or beside the running generator warms you. */
     tickWeather(dt, exposed, nearWarmth) {
       if (this.over) return; this.time += dt;
       const g = Game.gust(this.time);
-      if ((exposed && g > 0.2) || (exposed && this.time > 600)) this.warmth = Math.max(0, this.warmth - COLD_RATE * (0.5 + g) / this.s.endure * dt);
-      else if (!exposed || nearWarmth) this.warmth = Math.min(1, this.warmth + WARM_RATE * dt);
-      if (this.warmth <= 0) { this._coldT = (this._coldT || 0) + dt; if (this._coldT >= 6) { this._coldT = 0; this.hurt(1, "The cold bites. Find shelter."); } } else this._coldT = 0;
+      if (exposed && g > 0.2) this.warmth = Math.max(0, this.warmth - COLD_RATE * (0.5 + g) / this.s.endure * dt);
+      else if (!exposed || nearWarmth) this.warmth = Math.min(1, this.warmth + WARM_RATE * dt);          // shelter or the running generator: full recovery
+      else this.warmth = Math.min(1, this.warmth + WARM_RATE * 0.35 * dt);                              // calm air between gusts: slow recovery on your feet
+      if (this.warmth <= 0) { this._coldT = (this._coldT || 0) + dt; if (this._coldT >= 9) { this._coldT = 0; this.hurt(1, "The cold bites. Find shelter."); } } else this._coldT = 0;
     }
 
     /* ---- interactions: each returns a message, or null if nothing happened ---- */

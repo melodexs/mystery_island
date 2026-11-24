@@ -48,8 +48,11 @@ t("sailor resists cold better", () => {
   const a = new Game("scout"), b = new Game("sailor"); a.time = b.time = 14.9; for (let i = 0; i < 60; i++) { a.tickWeather(0.1, true, false); b.tickWeather(0.1, true, false); }
   if (!(b.warmth > a.warmth)) throw new Error(`sailor ${b.warmth} scout ${a.warmth}`);
 });
-t("long exposure at zero warmth costs a heart", () => {
-  const g = new Game("scout"); g.warmth = 0; g.time = 14.9; for (let i = 0; i < 80; i++) g.tickWeather(0.1, true, false); if (!(g.health < 5)) throw new Error("no cold damage");
-});
+t("sustained freezing costs a heart, brief cold does not", () => { const g = new Game("scout"); g.warmth = 0; const hold = () => { g.time = 19; g.tickWeather(0.1, true, false); }; for (let i = 0; i < 60; i++) hold(); eq(g.health, 5, "6 s frozen is still safe"); for (let i = 0; i < 60; i++) hold(); if (!(g.health < 5)) throw new Error("12 s frozen in a gust should cost a heart"); });
+t("standing in the open for 10 minutes is survivable (cold is pressure, not a death timer)", () => { const g = new Game("scout"); for (let i = 0; i < 6000; i++) g.tickWeather(0.1, true, false); eq(g.health, 5); });
 t("a dead player cannot win", () => { const g = new Game("scout"); g.inv.key = true; g.flags.generatorOn = true; g.flags.lighthouseOpen = true; g.hurt(5); eq(g.over, true); g.useBeacon(); eq(g.won, false); eq(g.flags.beaconOn, false); });
+t("checkpoint round-trips survivor, objective, inventory and flags", () => { const g = new Game("radio"); g.pickRope(); g.flags.ropeAnchored = true; g.searchCabin(); g.pickFuel("beach"); g.health = 3; const r = Game.restore(JSON.parse(JSON.stringify(g.snapshot()))); eq(r.key, "radio"); eq(r.objectiveIndex, g.objectiveIndex); eq(r.inv.fuel, 1); eq(r.inv.key, true); eq(r.health, 3); eq(r.flags.ropeAnchored, true); });
+t("restore rejects corrupt or foreign saves", () => { for (const bad of [null, {}, { v: 2 }, { v: 1, key: "hacker" }, "x", 5]) eq(Game.restore(bad), null); });
+t("restore clamps tampered numbers and never revives with 0 hearts", () => { const r = Game.restore({ v: 1, key: "scout", health: -9, stamina: 9999, warmth: NaN, inv: { fuel: 99 } }); eq(r.health, 1); eq(r.stamina, 100); eq(r.warmth, 1); eq(r.inv.fuel, 2); });
+t("a finished run (beacon lit) is not resumable", () => { const g = new Game("scout"); g.flags.beaconOn = true; eq(Game.restore(g.snapshot()), null); });
 console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
