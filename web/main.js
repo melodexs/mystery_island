@@ -150,7 +150,7 @@
     const s = DPR * SCALE * cam.zoom, cx = cv.width / 2, cy = cv.height * 0.62;
     ctx.setTransform(s, 0, 0, s, cx - cx * cam.zoom + cam.ox * DPR, cy - cy * cam.zoom + cam.oy * DPR);
   }
-  const fx = { lean: 0, bob: 0, sx: 1, sy: 1, rain: Array.from({ length: 150 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() })) };
+  const fx = { rain: Array.from({ length: 150 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() })) };
 
   function drawWorld() {
     const W = VW / SCALE;                                  // visible world width in world units
@@ -161,8 +161,9 @@
       const img = IMG[p.n]; if (!img.complete || !img.naturalWidth) continue;
       const sx = p.x - cam.x;
       if (sx + p.w < -2 || sx > W + 2) continue;
-      ctx.drawImage(img, sx, 0, p.w + 1, WORLD_H);
+      if (window.ALIVE) ALIVE.drawPiece(ctx, img, sx, p.w, WORLD_H, game ? game.x : 0, game ? game.y : 0, GROUND_Y, p.x); else ctx.drawImage(img, sx, 0, p.w + 1, WORLD_H);
     }
+    if (window.ALIVE) ALIVE.drawOverlay(ctx, W, WORLD_H, cam.x);
     ctx.restore();
   }
 
@@ -214,37 +215,24 @@
     ctx.restore();
   }
 
-  /* the painted survivor: stride bob, lean into the run, squash and stretch, shadow */
+  /* the painted survivor: the same picture, posed by PoseBlender (idle breathing, walk, run, sprint, jump, fall, land, crouch, slide, turn, wall-cling, interact) */
+  const pose = new PoseBlender();
   function drawPlayer(dt) {
     const img = IMG["fig_" + chosen]; if (!img.complete || !img.naturalWidth) return;
-    const speed = Math.abs(game.vx) / game.c.run;
-    const targetLean = (game.vx / game.c.run) * 0.16 + (game.onGround ? 0 : Math.max(-0.14, Math.min(0.14, game.vy / 9000)));
-    fx.lean += (targetLean - fx.lean) * Math.min(1, dt * 12);
-    const stride = game.onGround ? Math.sin(game.runTime * 3.2) * speed : 0;
-    fx.bob = Math.abs(stride) * 16;
-    // squash on landing, stretch while rising or falling fast
-    let sy = 1, sx = 1;
-    if (game.squash > 0) { sy = 1 - 0.22 * game.squash; sx = 1 + 0.2 * game.squash; }
-    else if (!game.onGround) { const s = Math.min(0.14, Math.abs(game.vy) / 9000); sy = 1 + s; sx = 1 - s * 0.8; }
-    fx.sx += (sx - fx.sx) * Math.min(1, dt * 20); fx.sy += (sy - fx.sy) * Math.min(1, dt * 20);
-
-    let poseH = PLAYER_H * 1.12;
-    if (game.sliding > 0) { poseH *= 0.62; fx.lean += (-game.facing * 0.5 * game.facing - fx.lean) * Math.min(1, dt * 18); }
-    else if (game.crouching) poseH *= 0.72;
-    else if (game.wall !== 0 && !game.onGround) fx.lean += (game.wall * 0.18 - fx.lean) * Math.min(1, dt * 14);
-    const h = poseH, w = PLAYER_H * 1.12 * (img.naturalWidth / img.naturalHeight);
+    const P = pose.update(dt, game);
+    const h = PLAYER_H * 1.12, w = h * (img.naturalWidth / img.naturalHeight);
     const px = game.x - cam.x, py = game.y;
     ctx.save(); camT();
-    // shadow on whatever you stand on; shrinks as you leave it
+    // shadow on whatever you stand on; shrinks as you leave it, widens when you slide
     const lift = game.onGround ? 0 : Math.min(1, (GROUND_Y - game.y) / 300 + 0.2);
     ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
-    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, 46 * (1 - lift * 0.4), 9, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, (46 + (pose.state === "slide" ? 26 : 0)) * (1 - lift * 0.4) * (1 + P.breathe * 0.01), 9, 0, 0, 7); ctx.fill();
     // dust puffs
     for (const d of game.dust) { const a = 1 - d.t / 0.5; ctx.fillStyle = `rgba(190,205,200,${0.35 * a})`; ctx.beginPath(); ctx.arc(d.x - cam.x + (d.t * 40) * (d.x % 2 ? 1 : -1), d.y - 6 - d.t * 30, 10 + d.t * 28, 0, 7); ctx.fill(); }
-    // the figure, pivoting at the feet
-    ctx.translate(px, py - fx.bob);
-    ctx.rotate(fx.lean * game.facing * (game.facing > 0 ? 1 : -1));
-    ctx.scale(game.facing * fx.sx, fx.sy);
+    // the figure, pivoting at the feet: bob and lift raise it, drop sinks it, lean and sway rotate it, sx and sy squash and stretch it
+    ctx.translate(px, py - P.bob - P.lift + P.drop);
+    ctx.rotate((P.lean + P.sway) * game.facing);
+    ctx.scale(game.facing * P.sx, P.sy);
     ctx.drawImage(img, -w / 2, -h, w, h);
     ctx.restore();
   }
@@ -388,6 +376,8 @@
       if (usePressed) { game.interact(); usePressed = false; }
       game.events.splice(0).forEach((ev) => {
         if (SFX[ev]) SFX[ev]();
+        if (ev === "pickup" || ev === "build" || ev === "deny") pose.kick("interact"); if (ev === "tired") pose.kick("hurt");
+        if (window.ALIVE) { if (ev === "step") ALIVE.disturb(game.x, game.y, 0.5 + game.speedFx * 0.6); else if (ev === "land") ALIVE.disturb(game.x, game.y, 0.8 + game.hardLand * 1.6); else if (ev === "slide" || ev === "walljump") ALIVE.disturb(game.x, game.y, 1.1); }
         if (ev === "land") { cam.shake = Math.max(cam.shake, 0.25 + game.hardLand * 0.75); cam.kick = Math.max(cam.kick, game.hardLand); }
         if (ev === "walljump") cam.shake = Math.max(cam.shake, 0.35);
         if (ev === "slide") cam.shake = Math.max(cam.shake, 0.2);
@@ -395,6 +385,7 @@
         if (ev === "win" || ev === "lose") { state = "ending"; setTimeout(endGame, ev === "win" ? 2800 : 2200); }
       });
     }
+    if (window.ALIVE && game && (state === "playing" || state === "ending")) ALIVE.update(dt, game, cam.x, VW / SCALE, 0);
     updateCamera(dt);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     drawWorld(); drawGround(); drawObjects(now); drawPlayer(dt); drawWeather(dt, now); updateHud();
