@@ -170,6 +170,21 @@ const player=new THREE.Group();scene.add(player);
 const bodyMat=new THREE.MeshStandardMaterial({color:0x34484a,roughness:.8});
 const skinMat=new THREE.MeshStandardMaterial({color:0x987b65,roughness:.9});
 const darkMat=new THREE.MeshStandardMaterial({color:0x1a2426,roughness:.95});
+const characterLooks={
+ castaway:{name:"THE CASTAWAY",body:0x46534a,gear:0x252b2a,skin:0x987b65,accent:0x9c7951},
+ explorer:{name:"THE EXPLORER",body:0x465a63,gear:0x26343b,skin:0xb88769,accent:0x6d9a9b},
+ sailor:{name:"THE OLD SAILOR",body:0x555047,gear:0x282923,skin:0xa17c62,accent:0xb28b4d},
+ scavenger:{name:"THE SCAVENGER",body:0x625044,gear:0x30251f,skin:0x98745d,accent:0x9b7045}
+};
+let selectedCharacter="castaway";
+function applyCharacterLook(id){
+ const look=characterLooks[id]||characterLooks.castaway;
+ selectedCharacter=id;
+ bodyMat.color.setHex(look.body);darkMat.color.setHex(look.gear);skinMat.color.setHex(look.skin);
+ $("hud-character").src="img/fig_"+id+".png";
+ $("selected-character-name").textContent="SELECTED: "+look.name;
+ document.querySelectorAll(".character-card").forEach(card=>card.classList.toggle("selected",card.dataset.character===id));
+}
 const torso=new THREE.Mesh(new THREE.CapsuleGeometry(.48,.9,5,8),bodyMat);torso.position.y=1.55;torso.castShadow=true;player.add(torso);
 const head=new THREE.Mesh(new THREE.SphereGeometry(.32,12,10),skinMat);head.position.y=2.45;head.castShadow=true;player.add(head);
 const pack=box(player,0,1.55,-.48,.65,.85,.35,darkMat);
@@ -193,12 +208,21 @@ function updateHud(){
  $("inventory").textContent=[state.rope?"ROPE":"",state.lantern?"LANTERN":""].filter(Boolean).join("  ·  ")||"EMPTY";
  $("objective").textContent=state.beacon?"Rescue signal active — reach the shore":!state.rope?"Find rope in the jungle":!state.lantern?"Search the cave for a lantern":!state.bridge?"Repair the broken bridge":"Restore the lighthouse beacon";
 }
+function openCharacterSelect(){
+ $("character-select").classList.remove("hidden");
+ applyCharacterLook(selectedCharacter);
+}
 function startGame(){
- gameStarted=true;$("intro").classList.add("hidden");$("hud").classList.remove("hidden");
+ gameStarted=true;$("character-select").classList.add("hidden");$("intro").classList.add("hidden");$("hud").classList.remove("hidden");
  toast("The storm has stranded you. Find a way to restore the lighthouse.");
  updateHud();renderer.domElement.requestPointerLock?.();
 }
-$("start").addEventListener("click",startGame);
+$("start").addEventListener("click",openCharacterSelect);
+document.querySelectorAll(".character-card").forEach(card=>{
+ card.addEventListener("click",()=>applyCharacterLook(card.dataset.character));
+});
+$("confirm-character").addEventListener("click",startGame);
+applyCharacterLook(selectedCharacter);
 $("help").addEventListener("click",()=>toast("WASD move · mouse look · Shift sprint · Space jump · E interact · Esc release mouse"));
 function interact(){
  let nearest=null,dist=4.4;
