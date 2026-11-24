@@ -46,6 +46,12 @@
     land:   () => noise(.12, 500, .18),
     step:   () => { const cave = game && game.x > 1500 && game.x < 2500, sand = game && game.x < 1500; noise(.05, cave ? 1500 : sand ? 380 : 800, cave ? .09 : .06); if (cave) beep(110, .05, "sine", .02); },
     slide:  () => noise(.5, 900, .12),
+    doublejump: () => { noise(.08, 1400, .08); beep(420, .16, "triangle", .05, 320); },
+    hang:   () => { noise(.1, 700, .12); beep(120, .1, "sine", .04); },
+    climb:  () => { noise(.25, 600, .1); },
+    drop:   () => noise(.1, 500, .08),
+    vault:  () => { noise(.18, 1000, .09); beep(260, .1, "triangle", .03, 180); },
+    roll:   () => { noise(.35, 700, .14); },
     walljump: () => { noise(.1, 1200, .1); beep(340, .12, "triangle", .05, 200); },
     pickup: () => { beep(660, .09, "triangle"); setTimeout(() => beep(990, .14, "triangle"), 90); },
     build:  () => { beep(180, .12, "square", .05); setTimeout(() => beep(240, .12, "square", .05), 120); setTimeout(() => beep(330, .2, "square", .05), 240); },
@@ -232,6 +238,7 @@
     // the figure, pivoting at the feet: bob and lift raise it, drop sinks it, lean and sway rotate it, sx and sy squash and stretch it
     ctx.translate(px, py - P.bob - P.lift + P.drop);
     ctx.rotate((P.lean + P.sway) * game.facing);
+    if (P.tilt) { ctx.translate(0, -h * 0.4); ctx.rotate(P.tilt); ctx.translate(0, h * 0.4); }
     ctx.scale(game.facing * P.sx, P.sy);
     ctx.drawImage(img, -w / 2, -h, w, h);
     ctx.restore();
@@ -376,6 +383,11 @@
       if (usePressed) { game.interact(); usePressed = false; }
       game.events.splice(0).forEach((ev) => {
         if (SFX[ev]) SFX[ev]();
+        if (ev === "doublejump") { pose.kick("doublejump"); cam.shake = Math.max(cam.shake, 0.12); }
+        if (ev === "roll") { cam.shake = Math.max(cam.shake, 0.3); cam.kick = Math.max(cam.kick, 0.5); }
+        if (ev === "hang") cam.shake = Math.max(cam.shake, 0.22);
+        if (ev === "vault") cam.shake = Math.max(cam.shake, 0.1);
+        if (window.ALIVE && (ev === "roll" || ev === "vault" || ev === "mantle" || ev === "doublejump")) ALIVE.disturb(game.x, game.y, 1.2);
         if (ev === "pickup" || ev === "build" || ev === "deny") pose.kick("interact"); if (ev === "tired") pose.kick("hurt");
         if (window.ALIVE) { if (ev === "step") ALIVE.disturb(game.x, game.y, 0.5 + game.speedFx * 0.6); else if (ev === "land") ALIVE.disturb(game.x, game.y, 0.8 + game.hardLand * 1.6); else if (ev === "slide" || ev === "walljump") ALIVE.disturb(game.x, game.y, 1.1); }
         if (ev === "land") { cam.shake = Math.max(cam.shake, 0.25 + game.hardLand * 0.75); cam.kick = Math.max(cam.kick, game.hardLand); }
