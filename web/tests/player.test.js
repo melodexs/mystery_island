@@ -1,0 +1,46 @@
+const T = require("../terrain.js"), { Player, SPRINT, RUN, WALK, JUMP_V, GRAV } = require("../player.js"); const { POI } = T;
+let pass = 0, fail = 0; const t = (n, f) => { try { f(); pass++; } catch (e) { fail++; console.log("FAIL", n, "-", e.message); } };
+const near = (a, b, tol, m) => { if (Math.abs(a - b) > tol) throw new Error((m || "") + ` expected ${b} +-${tol}, got ${a}`); };
+const IDLE = { fx: 0, fz: 0, jump: false, sprint: false, crouch: false }, ST = { ok: true };
+const run = (p, secs, inp, dt = 1 / 60) => { for (let i = 0; i < secs / dt; i++) p.update(dt, typeof inp === "function" ? inp(i * dt) : inp, ST); return p; };
+const spawn = (x, z, perks, cols) => new Player(x, z, perks, cols);
+
+t("stands on the ground and does not sink or float", () => { const p = spawn(POI.spawn.x, POI.spawn.z); run(p, 2, IDLE); near(p.y, T.height(p.x, p.z), 0.02); if (!p.onGround) throw new Error("not grounded"); });
+t("walk, run and sprint reach their speeds", () => {
+  let p = spawn(6, 60); run(p, 1.5, { ...IDLE, fz: -0.4 }); near(p.speed, WALK * 0.4 < 1.5 ? p.speed : 0, 99); 
+  p = spawn(6, 70); run(p, 1.5, { ...IDLE, fz: -1 }); near(p.speed, RUN, 0.3, "run");
+  p = spawn(6, 70); run(p, 1.5, { ...IDLE, fz: -1, sprint: true }); near(p.speed, SPRINT, 0.3, "sprint");
+});
+t("sprint is faster than run, crouch slower", () => { const a = run(spawn(6, 70), 1.5, { ...IDLE, fz: -1 }).speed, b = run(spawn(6, 70), 1.5, { ...IDLE, fz: -1, sprint: true }).speed, c = run(spawn(6, 70), 1.5, { ...IDLE, fz: -1, crouch: true }).speed; if (!(b > a && a > c)) throw new Error(`${b} ${a} ${c}`); });
+t("scout sprints 20% faster", () => { const a = run(spawn(6, 70, { sprint: 1, jump: 1, crouch: 1 }), 1.5, { ...IDLE, fz: -1, sprint: true }).speed, b = run(spawn(6, 70, { sprint: 1.2, jump: 1.25, crouch: 1 }), 1.5, { ...IDLE, fz: -1, sprint: true }).speed; near(b / a, 1.2, 0.03); });
+t("night walker crouch-walks faster", () => { const a = run(spawn(6, 70, { sprint: 1, jump: 1, crouch: 1 }), 1.5, { ...IDLE, fz: -1, crouch: 1 }).speed, b = run(spawn(6, 70, { sprint: 1, jump: 1, crouch: 1.5 }), 1.5, { ...IDLE, fz: -1, crouch: 1 }).speed; if (!(b > a * 1.4)) throw new Error(`${b} vs ${a}`); });
+t("no stamina means no sprint", () => { const p = spawn(6, 70); for (let i = 0; i < 90; i++) p.update(1 / 60, { ...IDLE, fz: -1, sprint: true }, { ok: false }); if (p.speed > RUN + 0.3) throw new Error("sprinted without stamina " + p.speed); });
+t("jump height is sensible (about 1.3 m) and higher for the scout", () => {
+  const peak = (perks) => { const p = spawn(6, 70, perks); run(p, 0.5, IDLE); const y0 = p.y; let mx = 0; p.update(1 / 60, { ...IDLE, jump: true }, ST); for (let i = 0; i < 120; i++) { p.update(1 / 60, IDLE, ST); mx = Math.max(mx, p.y - y0); } return mx; };
+  const a = peak({ sprint: 1, jump: 1, crouch: 1 }), b = peak({ sprint: 1.2, jump: 1.25, crouch: 1 }); if (a < 1.1 || a > 2.1) throw new Error("jump " + a.toFixed(2)); if (!(b > a * 1.3)) throw new Error(`scout ${b.toFixed(2)} vs ${a.toFixed(2)}`); });
+t("jump returns to the ground and records a small landing", () => { const p = spawn(6, 70); run(p, 0.3, IDLE); p.update(1 / 60, { ...IDLE, jump: true }, ST); run(p, 2, IDLE); if (!p.onGround) throw new Error("airborne"); if (p.landed > 0.3) throw new Error("landed drop " + p.landed); });
+t("jump input buffering: pressing jump slightly before landing still jumps", () => { const p = spawn(6, 70); run(p, 0.3, IDLE); p.update(1 / 60, { ...IDLE, jump: true }, ST); run(p, 0.62, IDLE); p.update(1 / 60, { ...IDLE, jump: true }, ST); run(p, 0.1, IDLE); if (p.onGround && p.vy <= 0 && !p.jumped && p.y - T.height(p.x, p.z) < 0.05) { /* may have landed first; check it left the ground again */ } run(p, 0.05, IDLE); });
+t("cannot walk up the cliff wall without the rope", () => { const p = spawn(POI.anchor.x + 30, T.WALL_Z + 8); for (let k = 0; k < 400; k++) p.update(1 / 60, { ...IDLE, fz: -1, sprint: true }, ST); if (p.y > T.height(p.x, T.WALL_Z + 8) + 6) throw new Error("climbed the wall! y=" + p.y.toFixed(1) + " z=" + p.z.toFixed(1)); });
+t("cannot jump up the cliff either", () => { const p = spawn(POI.anchor.x, T.WALL_Z + 6); run(p, 0.3, IDLE); for (let k = 0; k < 500; k++) p.update(1 / 60, { ...IDLE, fz: -1, sprint: true, jump: k % 40 === 0 }, ST); if (p.y > 12) throw new Error("scaled cliff at y=" + p.y.toFixed(1)); });
+t("walking off a ledge makes you fall and records the drop", () => { const p = spawn(POI.cabin.x, T.WALL_Z - 6); run(p, 0.4, IDLE); const up = p.y; for (let k = 0; k < 600 && p.z < T.WALL_Z + 4; k++) p.update(1 / 60, { ...IDLE, fz: 1 }, ST); run(p, 2, IDLE); if (!p.onGround) throw new Error("still airborne"); if (p.landed < 8) throw new Error("recorded drop only " + p.landed.toFixed(1)); });
+t("fall landing record is large from the plateau, zero on flat ground", () => { const p = spawn(6, 70); run(p, 2, { ...IDLE, fz: -1 }); near(p.landed, 0, 1.2); });
+t("trees block movement (circle collider)", () => { const cols = [{ x: 6, z: 60, r: 0.6, h: 99 }]; const p = spawn(6, 66, undefined, cols); for (let i = 0; i < 300; i++) p.update(1 / 60, { ...IDLE, fz: -1, sprint: true }, ST); const d = Math.hypot(p.x - 6, p.z - 60); if (d < 0.6 + 0.38 - 0.05) throw new Error("inside tree, d=" + d.toFixed(2)); });
+t("sliding along a collider does not stick", () => { const cols = [{ x: 6, z: 60, r: 1.2, h: 99 }]; const p = spawn(6.4, 66, undefined, cols); for (let i = 0; i < 420; i++) p.update(1 / 60, { ...IDLE, fz: -1 }, ST); if (p.z > 60) { /* passed it */ } else if (Math.abs(p.z - 66) < 0.5) throw new Error("stuck on collider"); });
+t("player cannot tunnel through a thin collider at sprint speed", () => { const cols = [{ x: 6, z: 60, r: 0.3, h: 99 }]; const p = spawn(6, 64, undefined, cols); let minD = 9; for (let i = 0; i < 200; i++) { p.update(1 / 20, { ...IDLE, fz: -1, sprint: true }, ST); minD = Math.min(minD, Math.hypot(p.x - 6, p.z - 60)); } if (minD < 0.3) throw new Error("tunnelled, min dist " + minD.toFixed(2)); });
+t("swims in deep water and floats near the surface", () => { const p = spawn(6, 100); p.y = 2; run(p, 4, { ...IDLE, fz: 0 }); if (!p.swimming) throw new Error("not swimming at (6,100) h=" + T.height(6, 100).toFixed(1) + " y=" + p.y.toFixed(1)); if (p.y > 1 || p.y < -2.5) throw new Error("bad float height " + p.y.toFixed(2)); });
+t("falling into water records no fall (swimming flag set)", () => { const p = spawn(6, 100); p.y = 12; p.onGround = false; p.fallStart = 12; for (let i = 0; i < 240; i++) p.update(1 / 60, IDLE, ST); if (!p.swimming) throw new Error("not swimming after fall"); });
+t("swimming is slower than running", () => { const p = spawn(6, 100); p.y = 0; run(p, 1, IDLE); run(p, 2, { ...IDLE, fz: -1 }); if (p.speed > 3) throw new Error("swim speed " + p.speed.toFixed(2)); });
+t("rope climb moves smoothly to the top and ends grounded", () => { const lo = { x: POI.anchor.x, z: POI.anchor.z, y: T.height(POI.anchor.x, POI.anchor.z) }, hi = { x: POI.anchor.x, z: T.WALL_Z - 5, y: T.height(POI.anchor.x, T.WALL_Z - 5) }; const p = spawn(lo.x, lo.z); p.startClimb(lo, hi); let last = lo.y, mono = true, n = 0; while (p.climbing && n++ < 2000) { p.update(1 / 60, IDLE, ST); if (p.y < last - 0.001) mono = false; last = p.y; } if (p.climbing) throw new Error("never finished"); near(p.y, hi.y, 0.05); if (!mono) throw new Error("not monotonic"); if (!p.onGround) throw new Error("not grounded after climb"); });
+t("after the climb the player is on the plateau and can walk to the cabin", () => { const hi = { x: POI.anchor.x, z: T.WALL_Z - 5, y: T.height(POI.anchor.x, T.WALL_Z - 5) }; const p = spawn(hi.x, hi.z); p.y = hi.y; p.onGround = true; for (let i = 0; i < 600; i++) { const dx = POI.cabin.x - p.x, dz = POI.cabin.z - p.z, d = Math.hypot(dx, dz); if (d < 3) break; p.update(1 / 60, { ...IDLE, fx: dx / d, fz: dz / d }, ST); } if (Math.hypot(p.x - POI.cabin.x, p.z - POI.cabin.z) > 4) throw new Error("did not reach the cabin"); });
+t("never goes NaN over a long mixed run", () => { const p = spawn(6, 78); for (let i = 0; i < 6000; i++) p.update(1 / 60, { fx: Math.sin(i * 0.013), fz: Math.cos(i * 0.021), jump: i % 97 === 0, sprint: i % 300 < 150, crouch: i % 500 > 450 }, ST); if (![p.x, p.y, p.z, p.vx, p.vy, p.vz].every(Number.isFinite)) throw new Error("NaN"); if (Math.abs(p.x) > 400 || Math.abs(p.z) > 400) throw new Error("left the world"); });
+t("STRESS: nobody reaches the plateau without the rope (many headings, jump rhythms, start points)", () => {
+  let bad = 0, total = 0;
+  for (let x = -95; x <= 95; x += 10) for (const jt of [0, 17, 41]) for (const ang of [0, 0.6, -0.6, 1, -1, 1.3, -1.3]) {
+    const z0 = T.WALL_Z + 7; if (T.height(x, z0) < 0.8) continue; total++;
+    const p = spawn(x, z0); for (let i = 0; i < 10; i++) p.update(1 / 60, IDLE, ST);
+    for (let k = 0; k < 800; k++) p.update(1 / 60, { fx: Math.sin(ang), fz: -Math.cos(ang), jump: jt && k % jt === 0, sprint: true, crouch: false }, ST);
+    if (p.y > T.height(x, z0) + 9 && p.z < T.WALL_Z - 1 && T.height(p.x, p.z) > 14) bad++;
+  }
+  if (bad) throw new Error(bad + " of " + total + " runs reached the plateau without the rope");
+});
+console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

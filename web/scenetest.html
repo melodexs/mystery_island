@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
+<script src="terrain.js"></script></head><body><div id="c"></div>
+<script type="module">
+import * as THREE from "three"; import { buildWorld } from "./world.js"; import { buildProps } from "./props.js"; import { buildLandmarks } from "./landmarks.js";
+const r=new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth,innerHeight); r.shadowMap.enabled=true; r.toneMapping=THREE.ACESFilmicToneMapping; r.toneMappingExposure=1.15; document.getElementById("c").appendChild(r.domElement);
+const scene=new THREE.Scene(); const cam=new THREE.PerspectiveCamera(62,innerWidth/innerHeight,0.3,900);
+try{ const W=buildWorld(scene); const P=buildProps(scene,W); const L=buildLandmarks(scene,W,P); window.__ok={W,L,scene,cam,r,THREE};
+ window.shot=(x,y,z,lx,ly,lz)=>{cam.position.set(x,y,z);cam.lookAt(lx,ly,lz);W.sun.target.position.set(lx,ly,lz);W.sun.position.set(lx-60,ly+90,lz+40);r.render(scene,cam);return scene.children.length};
+ window.ready=true; }catch(e){window.err=e.stack}
+</script></body></html>
