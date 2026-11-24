@@ -1,28 +1,34 @@
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import * as THREE from "three";
+import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/loaders/GLTFLoader.js";
 
 const $ = (id) => document.getElementById(id);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101d22);
-scene.fog = new THREE.FogExp2(0x17262b, 0.0105);
+scene.fog = new THREE.FogExp2(0x17262b, 0.0072);
 
-const camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.1, 500);
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 700);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMappingExposure = 1.28;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 $("world").appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0x9db8bd, 0x17201d, 1.25));
+scene.add(new THREE.HemisphereLight(0xb5d1dc, 0x111a17, 1.55));
+const fillLight = new THREE.DirectionalLight(0x7898a5, 0.55); fillLight.position.set(28, 18, -32); scene.add(fillLight);
 const moon = new THREE.DirectionalLight(0xb8d2d7, 2.2);
 moon.position.set(-35, 55, 20); moon.castShadow = true;
-moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.mapSize.set(4096, 4096);
+moon.shadow.bias = -0.00018;
+moon.shadow.normalBias = 0.025;
 moon.shadow.camera.left = -65; moon.shadow.camera.right = 65;
 moon.shadow.camera.top = 65; moon.shadow.camera.bottom = -65;
 scene.add(moon);
-const beaconLight = new THREE.PointLight(0xffd99a, 0, 38, 2);
+const beaconLight = new THREE.PointLight(0xffd99a, 0, 48, 2);
 beaconLight.position.set(0, 18, -36); scene.add(beaconLight);
 
 const mats = {
@@ -165,36 +171,69 @@ marker("lantern","Find the lantern in the cave", -27,7,0xffc66f);
 marker("bridge","Repair the old bridge", -12,-3,0x7fc8c0);
 marker("beacon","Restore the lighthouse beacon", 0,-32,0xffd18a);
 
-// Survivor model: intentionally original, simple layered human silhouette, not a copied game character.
+// Rigged survivor operators (CC0 assets) replace the old placeholder mannequin.
 const player=new THREE.Group();scene.add(player);
+const fallback=new THREE.Group();player.add(fallback);
 const bodyMat=new THREE.MeshStandardMaterial({color:0x34484a,roughness:.8});
 const skinMat=new THREE.MeshStandardMaterial({color:0x987b65,roughness:.9});
 const darkMat=new THREE.MeshStandardMaterial({color:0x1a2426,roughness:.95});
+const torso=new THREE.Mesh(new THREE.CapsuleGeometry(.48,.9,5,8),bodyMat);torso.position.y=1.55;torso.castShadow=true;fallback.add(torso);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.32,12,10),skinMat);head.position.y=2.45;head.castShadow=true;fallback.add(head);
+box(fallback,0,1.55,-.48,.65,.85,.35,darkMat);
+const legs=[];
+for(const x of [-.23,.23]){const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.17,.72,4,7),darkMat);leg.position.set(x,.62,0);leg.castShadow=true;fallback.add(leg);legs.push(leg);}
+const arms=[];
+for(const x of [-.62,.62]){const arm=new THREE.Mesh(new THREE.CapsuleGeometry(.14,.72,4,7),bodyMat);arm.position.set(x,1.55,0);arm.castShadow=true;fallback.add(arm);arms.push(arm);}
 const characterLooks={
- castaway:{name:"THE CASTAWAY",body:0x46534a,gear:0x252b2a,skin:0x987b65,accent:0x9c7951},
- explorer:{name:"THE EXPLORER",body:0x465a63,gear:0x26343b,skin:0xb88769,accent:0x6d9a9b},
- sailor:{name:"THE OLD SAILOR",body:0x555047,gear:0x282923,skin:0xa17c62,accent:0xb28b4d},
- scavenger:{name:"THE SCAVENGER",body:0x625044,gear:0x30251f,skin:0x98745d,accent:0x9b7045}
+ castaway:{name:"ISLAND SCOUT",model:"https://gobkit.com/freebies/human022/NightReconScout.glb"},
+ explorer:{name:"RADIO OPERATOR",model:"https://gobkit.com/freebies/human022/FieldRadioOperator.glb"},
+ sailor:{name:"TEAM LEADER",model:"https://gobkit.com/freebies/human022/AssaultTeamLeader.glb"},
+ scavenger:{name:"BLACK OPS",model:"https://gobkit.com/freebies/human022/BlackOpsOperator.glb"}
 };
-let selectedCharacter="castaway";
+const gltfLoader=new GLTFLoader();
+let selectedCharacter="castaway",activeModel=null,animationMixer=null,activeAction=null,loadTicket=0;
+function setCharacterMotion(name){
+ if(!animationMixer||!activeModel)return;
+ const clip=activeModel.animations.find(a=>a.name.toLowerCase()===name.toLowerCase())||activeModel.animations.find(a=>a.name.toLowerCase()==="idle")||activeModel.animations[0];
+ if(!clip)return;
+ const next=animationMixer.clipAction(clip);
+ if(activeAction===next)return;
+ next.reset().fadeIn(.22).play();
+ if(activeAction)activeAction.fadeOut(.22);
+ activeAction=next;
+}
+function loadOperator(id){
+ const ticket=++loadTicket,look=characterLooks[id]||characterLooks.castaway;
+ toast("Loading 3D operator…");
+ gltfLoader.load(look.model,gltf=>{
+   if(ticket!==loadTicket)return;
+   const model=gltf.scene;
+   const bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3());
+   if(!size.y)throw new Error("Operator model has no measurable height");
+   model.scale.setScalar(2.15/size.y);
+   const normalized=new THREE.Box3().setFromObject(model),center=normalized.getCenter(new THREE.Vector3());
+   model.position.x-=center.x;model.position.z-=center.z;model.position.y-=normalized.min.y;
+   model.traverse(node=>{if(node.isMesh){node.castShadow=true;node.receiveShadow=true;if(node.material){node.material.roughness=Math.max(node.material.roughness??.7,.62);}}});
+   if(activeModel)player.remove(activeModel.root);
+   player.add(model);fallback.visible=false;
+   activeModel={root:model,animations:gltf.animations};
+   animationMixer=new THREE.AnimationMixer(model);activeAction=null;
+   setCharacterMotion("Idle");
+   toast(look.name+" ready.");
+ },undefined,error=>{
+   if(ticket!==loadTicket)return;
+   console.error("Operator model failed to load",error);
+   fallback.visible=true;
+   toast("3D operator could not load. Check your connection and retry.");
+ });
+}
 function applyCharacterLook(id){
  const look=characterLooks[id]||characterLooks.castaway;
  selectedCharacter=id;
- bodyMat.color.setHex(look.body);darkMat.color.setHex(look.gear);skinMat.color.setHex(look.skin);
- $("hud-character").src="img/fig_"+id+".png";
  $("selected-character-name").textContent="SELECTED: "+look.name;
+ $("hud-character").textContent=look.name.split(" ").map(word=>word[0]).join("").slice(0,2);
  document.querySelectorAll(".character-card").forEach(card=>card.classList.toggle("selected",card.dataset.character===id));
-}
-const torso=new THREE.Mesh(new THREE.CapsuleGeometry(.48,.9,5,8),bodyMat);torso.position.y=1.55;torso.castShadow=true;player.add(torso);
-const head=new THREE.Mesh(new THREE.SphereGeometry(.32,12,10),skinMat);head.position.y=2.45;head.castShadow=true;player.add(head);
-const pack=box(player,0,1.55,-.48,.65,.85,.35,darkMat);
-const legs=[];
-for(const x of [-.23,.23]){
- const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.17,.72,4,7),darkMat);leg.position.set(x,.62,0);leg.castShadow=true;player.add(leg);legs.push(leg);
-}
-const arms=[];
-for(const x of [-.62,.62]){
- const arm=new THREE.Mesh(new THREE.CapsuleGeometry(.14,.72,4,7),bodyMat);arm.position.set(x,1.55,0);arm.castShadow=true;player.add(arm);arms.push(arm);
+ loadOperator(id);
 }
 player.position.set(22,0,18);
 
@@ -268,6 +307,7 @@ const cameraOffset=new THREE.Vector3();
 function animate(){
  requestAnimationFrame(animate);
  const dt=Math.min(clock.getDelta(),.04);elapsed+=dt;
+ if(animationMixer)animationMixer.update(dt);
  // Rolling ocean swell, wind-driven rain and intermittent lightning keep the island alive.
  for(let i=0;i<seaPositions.count;i++){const x=seaBase[i*3],z=seaBase[i*3+2];seaPositions.array[i*3+1]=seaBase[i*3+1]+Math.sin(x*.12+elapsed*1.1)*.22+Math.cos(z*.17+elapsed*.8)*.15;}
  seaPositions.needsUpdate=true;sea.geometry.computeVertexNormals();
@@ -286,17 +326,19 @@ function animate(){
   if(Math.hypot(forward,side)>.1){
     player.rotation.y=Math.atan2(dx,dz);
     moveSpeed=THREE.MathUtils.damp(moveSpeed,speed,9,dt);
+    setCharacterMotion(sprint?"Run":"Walk");
     torso.position.y=1.55+Math.abs(Math.sin(elapsed*(sprint?13:9)))*.07;
     legs[0].rotation.x=Math.sin(elapsed*(sprint?13:9))*.55;legs[1].rotation.x=-legs[0].rotation.x;
     arms[0].rotation.x=-legs[0].rotation.x*.65;arms[1].rotation.x=-legs[1].rotation.x*.65;
-  }else{moveSpeed=THREE.MathUtils.damp(moveSpeed,0,8,dt);legs.forEach(l=>l.rotation.x=THREE.MathUtils.damp(l.rotation.x,0,9,dt));arms.forEach(a=>a.rotation.x=THREE.MathUtils.damp(a.rotation.x,0,9,dt));torso.position.y=THREE.MathUtils.damp(torso.position.y,1.55,8,dt);}
+  }else{moveSpeed=THREE.MathUtils.damp(moveSpeed,0,8,dt);setCharacterMotion("Idle");legs.forEach(l=>l.rotation.x=THREE.MathUtils.damp(l.rotation.x,0,9,dt));arms.forEach(a=>a.rotation.x=THREE.MathUtils.damp(a.rotation.x,0,9,dt));torso.position.y=THREE.MathUtils.damp(torso.position.y,1.55,8,dt);}
   if(sprint&&Math.hypot(forward,side)>.1)state.stamina=Math.max(0,state.stamina-23*dt);else state.stamina=Math.min(100,state.stamina+15*dt);
   if((keys.has("Space")||touch.jump)&&onGround){velocityY=8.2;onGround=false;touch.jump=false;keys.delete("Space");}
   velocityY-=20*dt;player.position.y+=velocityY*dt;
   if(player.position.y<0){player.position.y=0;velocityY=0;onGround=true;}
   if(player.position.y>0){onGround=false;}
   const target=new THREE.Vector3(player.position.x+Math.sin(yaw)*.8,player.position.y+1.5,player.position.z+Math.cos(yaw)*.8);
-  cameraOffset.set(Math.sin(yaw)*-7,3.1+pitch*4,Math.cos(yaw)*-7);
+  cameraOffset.set(Math.sin(yaw)*-5.4+Math.cos(yaw)*.72,2.65+pitch*3.2,Math.cos(yaw)*-5.4-Math.sin(yaw)*.72);
+  camera.fov=THREE.MathUtils.damp(camera.fov,sprint?66:62,5,dt);camera.updateProjectionMatrix();
   camera.position.lerp(new THREE.Vector3(target.x+cameraOffset.x,target.y+cameraOffset.y,target.z+cameraOffset.z),1-Math.exp(-7*dt));
   camera.lookAt(target);
   let nearest=4.4;for(const o of interactables){if(o.active)nearest=Math.min(nearest,Math.hypot(player.position.x-o.x,player.position.z-o.z));}
@@ -308,5 +350,5 @@ function animate(){
  renderer.render(scene,camera);
 }
 camera.position.set(22,5,27);camera.lookAt(0,0,-15);animate();
-addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));});
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));});
 updateHud();
