@@ -30,10 +30,23 @@
     f.type = "lowpass"; f.frequency.value = freq; g.gain.value = vol; s.buffer = buf; s.connect(f); f.connect(g); g.connect(a.destination); s.start();
   }
   const thunder = () => noise(1.6, 200, 0.4);
+  // continuous wind and rain bed, louder when you move fast
+  let amb = null;
+  function startAmbience() {
+    const a = audio(); if (!a || amb) return;
+    const n = a.sampleRate * 2, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+    src.buffer = buf; src.loop = true; f.type = "lowpass"; f.frequency.value = 500; g.gain.value = 0;
+    src.connect(f); f.connect(g); g.connect(a.destination); src.start(); amb = { f, g };
+  }
+  function updateAmbience(speedFx) { if (!amb || !actx) return; const t = actx.currentTime; amb.g.gain.setTargetAtTime(muted ? 0 : 0.035 + speedFx * 0.05, t, 0.2); amb.f.frequency.setTargetAtTime(500 + speedFx * 900, t, 0.2); }
   const SFX = {
     jump:   () => beep(300, .14, "triangle", .05, 260),
     land:   () => noise(.12, 500, .18),
-    step:   () => noise(.05, 700, .05),
+    step:   () => { const cave = game && game.x > 1500 && game.x < 2500, sand = game && game.x < 1500; noise(.05, cave ? 1500 : sand ? 380 : 800, cave ? .09 : .06); if (cave) beep(110, .05, "sine", .02); },
+    slide:  () => noise(.5, 900, .12),
+    walljump: () => { noise(.1, 1200, .1); beep(340, .12, "triangle", .05, 200); },
     pickup: () => { beep(660, .09, "triangle"); setTimeout(() => beep(990, .14, "triangle"), 90); },
     build:  () => { beep(180, .12, "square", .05); setTimeout(() => beep(240, .12, "square", .05), 120); setTimeout(() => beep(330, .2, "square", .05), 240); },
     deny:   () => beep(140, .18, "sawtooth", .05),
@@ -76,15 +89,17 @@
     SCALE = VH / WORLD_H;                       // world height fills the screen height
   }
   window.addEventListener("resize", resize); resize();
-  const cam = { x: 0 };
+  const cam = { x: 0, shake: 0, zoom: 1, kick: 0, ox: 0, oy: 0 };
 
   /* ---------------- input ---------------- */
-  const keys = new Set(); let jumpPressed = false, usePressed = false;
-  const touch = { dir: 0, jumpHeld: false };
+  const keys = new Set(); let jumpPressed = false, usePressed = false, slidePressed = false;
+  const touch = { dir: 0, jumpHeld: false, sprint: false, crouch: false };
   window.addEventListener("keydown", (e) => {
     if (["ArrowLeft", "KeyA"].includes(e.code)) { keys.add("l"); e.preventDefault(); }
     if (["ArrowRight", "KeyD"].includes(e.code)) { keys.add("r"); e.preventDefault(); }
     if (["ArrowUp", "KeyW", "Space"].includes(e.code)) { if (!keys.has("j") && state === "playing") jumpPressed = true; keys.add("j"); e.preventDefault(); }
+    if (["ShiftLeft", "ShiftRight"].includes(e.code)) { keys.add("s"); e.preventDefault(); }
+    if (["KeyC", "ControlLeft", "ArrowDown", "KeyS"].includes(e.code)) { if (!keys.has("c") && state === "playing") slidePressed = true; keys.add("c"); e.preventDefault(); }
     if (e.code === "KeyE" && !e.repeat) { if (state === "playing") usePressed = true; }
     if ((e.code === "Enter" || e.code === "Space") && state === "boat") { nextStory(); e.preventDefault(); }
   });
@@ -92,6 +107,8 @@
     if (["ArrowLeft", "KeyA"].includes(e.code)) keys.delete("l");
     if (["ArrowRight", "KeyD"].includes(e.code)) keys.delete("r");
     if (["ArrowUp", "KeyW", "Space"].includes(e.code)) keys.delete("j");
+    if (["ShiftLeft", "ShiftRight"].includes(e.code)) keys.delete("s");
+    if (["KeyC", "ControlLeft", "ArrowDown", "KeyS"].includes(e.code)) keys.delete("c");
   });
   window.addEventListener("blur", () => { keys.clear(); touch.dir = 0; touch.jumpHeld = false; });
 
@@ -99,33 +116,46 @@
   const stick = $("stick"), knob = $("knob"); let stickId = null, stickCx = 0;
   stick.addEventListener("pointerdown", (e) => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (_) {} const r = stick.getBoundingClientRect(); stickCx = r.left + r.width / 2; moveStick(e); e.preventDefault(); });
   stick.addEventListener("pointermove", (e) => { if (e.pointerId === stickId) moveStick(e); });
-  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touch.dir = 0; knob.style.transform = "translate(-50%,-50%)"; };
+  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touch.dir = 0; touch.far = false; knob.style.transform = "translate(-50%,-50%)"; };
   stick.addEventListener("pointerup", endStick); stick.addEventListener("pointercancel", endStick); stick.addEventListener("lostpointercapture", endStick);
   function moveStick(e) {
     const r = stick.getBoundingClientRect(), half = r.width / 2;
     const dx = Math.max(-half, Math.min(half, e.clientX - stickCx));
     knob.style.transform = `translate(calc(-50% + ${dx * 0.7}px), -50%)`;
     touch.dir = Math.abs(dx) < half * 0.22 ? 0 : (dx > 0 ? 1 : -1);
+    touch.far = Math.abs(dx) > half * 0.92;
   }
   const jb = $("btn-jump");
   jb.addEventListener("pointerdown", (e) => { jumpPressed = true; touch.jumpHeld = true; try { jb.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
   const jup = () => { touch.jumpHeld = false; };
   jb.addEventListener("pointerup", jup); jb.addEventListener("pointercancel", jup); jb.addEventListener("lostpointercapture", jup);
   $("btn-use").addEventListener("pointerdown", (e) => { usePressed = true; e.preventDefault(); });
+  const sb = $("btn-sprint"), cb = $("btn-slide");
+  sb.addEventListener("pointerdown", (e) => { touch.sprint = !touch.sprint; sb.classList.toggle("on", touch.sprint); e.preventDefault(); });
+  cb.addEventListener("pointerdown", (e) => { slidePressed = true; touch.crouch = true; cb.classList.add("on"); try { cb.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+  const cup = () => { touch.crouch = false; cb.classList.remove("on"); };
+  cb.addEventListener("pointerup", cup); cb.addEventListener("pointercancel", cup); cb.addEventListener("lostpointercapture", cup);
   document.addEventListener("gesturestart", (e) => e.preventDefault());
 
   function readInput() {
     const l = keys.has("l") || touch.dir < 0, r = keys.has("r") || touch.dir > 0;
-    return { dir: (r ? 1 : 0) - (l ? 1 : 0), jump: jumpPressed, jumpHeld: keys.has("j") || touch.jumpHeld };
+    // full-stick push on touch sprints automatically, like a Call of Duty Mobile stick
+    return { dir: (r ? 1 : 0) - (l ? 1 : 0), jump: jumpPressed, jumpHeld: keys.has("j") || touch.jumpHeld,
+             sprint: keys.has("s") || touch.sprint || touch.far, crouch: keys.has("c") || touch.crouch, slide: slidePressed };
   }
 
   /* ---------------- drawing ---------------- */
+  // world transform: base scale, then zoom about the screen centre, then shake and landing kick
+  function camT() {
+    const s = DPR * SCALE * cam.zoom, cx = cv.width / 2, cy = cv.height * 0.62;
+    ctx.setTransform(s, 0, 0, s, cx - cx * cam.zoom + cam.ox * DPR, cy - cy * cam.zoom + cam.oy * DPR);
+  }
   const fx = { lean: 0, bob: 0, sx: 1, sy: 1, rain: Array.from({ length: 150 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() })) };
 
   function drawWorld() {
     const W = VW / SCALE;                                  // visible world width in world units
     const parallaxX = cam.x * 0.0;                          // painting is the main layer; storm layer below drifts
-    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    ctx.save(); camT();
     ctx.fillStyle = "#04100f"; ctx.fillRect(0, 0, VW / SCALE, WORLD_H);
     for (const p of WORLD_PIECES) {
       const img = IMG[p.n]; if (!img.complete || !img.naturalWidth) continue;
@@ -137,7 +167,7 @@
   }
 
   function drawGround() {
-    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    ctx.save(); camT();
     const W = VW / SCALE;
     for (const p of game.platforms()) {
       const sx = p.x - cam.x; if (sx + p.w < -4 || sx > W + 4) continue;
@@ -147,7 +177,13 @@
       g.addColorStop(0, lifted ? "rgba(46,62,60,.96)" : "rgba(10,18,17,.92)"); g.addColorStop(1, "rgba(4,10,9,0)");
       ctx.fillStyle = g; ctx.fillRect(sx, p.y, p.w, lifted ? 60 : 130);
       ctx.fillStyle = lifted ? "rgba(140,200,190,.55)" : "rgba(95,211,196,.18)"; ctx.fillRect(sx, p.y - 1, p.w, 3);
-      if (lifted) { ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(sx, p.y + 60, p.w, 160); }
+      if (lifted) {
+        const faceH = GROUND_Y - p.y;                           // the block's body, down to the ground
+        const fg = ctx.createLinearGradient(0, p.y, 0, GROUND_Y); fg.addColorStop(0, "rgba(40,56,54,.96)"); fg.addColorStop(1, "rgba(14,24,23,.96)");
+        ctx.fillStyle = fg; ctx.fillRect(sx, p.y, p.w, faceH);
+        ctx.fillStyle = "rgba(140,200,190,.5)"; ctx.fillRect(sx, p.y, 4, faceH); ctx.fillRect(sx + p.w - 4, p.y, 4, faceH);   // lit side edges
+        ctx.fillStyle = "rgba(0,0,0,.35)"; for (let i = 1; i < 3; i++) ctx.fillRect(sx + 8, p.y + faceH * i / 3, p.w - 16, 3);   // plank or rock seams
+      }
     }
     // the broken bridge: show jagged plank stubs on each side until repaired
     if (!game.bridgeRepaired) {
@@ -162,7 +198,7 @@
   }
 
   function drawObjects(t) {
-    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    ctx.save(); camT();
     for (const o of game.objectsHere()) {
       const sx = o.x - cam.x; if (sx < -200 || sx > VW / SCALE + 200) continue;
       const pulse = 0.55 + 0.45 * Math.sin(t / 380);
@@ -192,9 +228,13 @@
     else if (!game.onGround) { const s = Math.min(0.14, Math.abs(game.vy) / 9000); sy = 1 + s; sx = 1 - s * 0.8; }
     fx.sx += (sx - fx.sx) * Math.min(1, dt * 20); fx.sy += (sy - fx.sy) * Math.min(1, dt * 20);
 
-    const h = PLAYER_H * 1.12, w = h * (img.naturalWidth / img.naturalHeight);
+    let poseH = PLAYER_H * 1.12;
+    if (game.sliding > 0) { poseH *= 0.62; fx.lean += (-game.facing * 0.5 * game.facing - fx.lean) * Math.min(1, dt * 18); }
+    else if (game.crouching) poseH *= 0.72;
+    else if (game.wall !== 0 && !game.onGround) fx.lean += (game.wall * 0.18 - fx.lean) * Math.min(1, dt * 14);
+    const h = poseH, w = PLAYER_H * 1.12 * (img.naturalWidth / img.naturalHeight);
     const px = game.x - cam.x, py = game.y;
-    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    ctx.save(); camT();
     // shadow on whatever you stand on; shrinks as you leave it
     const lift = game.onGround ? 0 : Math.min(1, (GROUND_Y - game.y) / 300 + 0.2);
     ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
@@ -229,6 +269,11 @@
   }
 
   function updateCamera(dt) {
+    // sprint opens the view a little (feels fast); landings kick the camera down and shake it
+    const wantZoom = 1 - game.speedFx * 0.06;
+    cam.zoom += (wantZoom - cam.zoom) * Math.min(1, dt * 5);
+    cam.shake = Math.max(0, cam.shake - dt * 3.2); cam.kick = Math.max(0, cam.kick - dt * 4);
+    const sh = cam.shake * cam.shake * 14; cam.ox = (Math.random() - 0.5) * sh; cam.oy = (Math.random() - 0.5) * sh + cam.kick * 16;
     const W = VW / SCALE;
     const lookAhead = game.facing * Math.min(1, Math.abs(game.vx) / game.c.run) * 130;   // camera leads the run
     const want = Math.max(0, Math.min(WORLD_W - W, game.x + lookAhead - W * 0.45));
@@ -291,8 +336,8 @@
   function startBoat() { game = new Game(chosen, $("name-input").value.trim()); state = "boat"; storyIdx = 0; show("screen-boat"); showStory(); startStorm(); }
   function beginGame() {
     clearInterval(showStory.t);
-    state = "playing"; jumpPressed = usePressed = false; lastInv = "~"; cam.x = 0; lastT = performance.now();
-    show("screen-game"); resize(); buildHud();
+    state = "playing"; jumpPressed = usePressed = slidePressed = false; lastInv = "~"; cam.x = 0; lastT = performance.now();
+    show("screen-game"); resize(); buildHud(); startAmbience();
     game.say(`${game.name}, find the rope and the lantern. Light the beacon.`, 5); startStorm();
   }
   function endGame() {
@@ -316,8 +361,18 @@
   $("quit").addEventListener("click", () => { if (state === "playing") { game.over = true; game.won = false; endGame(); } });
   $("again").addEventListener("click", () => { $("name-input").value = ""; state = "title"; show("screen-title"); });
 
+  /* is the player pressed up against the side of a raised rock or crate? */
+  function blockedByBlock(dir) {
+    for (const p of game.platforms()) {
+      if (p.y >= GROUND_Y - 5) continue;
+      const edge = dir > 0 ? p.x - (game.x + PLAYER_W / 2) : (game.x - PLAYER_W / 2) - (p.x + p.w);
+      if (edge > -6 && edge < 8) return true;
+    }
+    return false;
+  }
+
   /* ---------------- loop ---------------- */
-  let lastT = performance.now();
+  let lastT = performance.now(), hinted = false;
   const STEP = 1 / 120; let acc = 0;
   function frame(now) {
     requestAnimationFrame(frame);
@@ -326,11 +381,17 @@
     if (state === "playing") {
       const input = readInput(); acc += dt;                      // fixed physics step keeps jumps identical on every device
       let first = true;
-      while (acc >= STEP) { game.update(STEP, { dir: input.dir, jump: first && input.jump, jumpHeld: input.jumpHeld }); first = false; acc -= STEP; }
-      jumpPressed = false;
+      while (acc >= STEP) { game.update(STEP, { dir: input.dir, jump: first && input.jump, jumpHeld: input.jumpHeld, sprint: input.sprint, crouch: input.crouch, slide: first && input.slide }); first = false; acc -= STEP; }
+      if (!hinted && game.onGround && input.dir !== 0 && Math.abs(game.vx) < 5 && blockedByBlock(input.dir)) { hinted = true; game.say("Jump to climb it. Jump again against its wall to wall-jump.", 5); }
+      jumpPressed = false; slidePressed = false;
+      updateAmbience(game.speedFx);
       if (usePressed) { game.interact(); usePressed = false; }
       game.events.splice(0).forEach((ev) => {
         if (SFX[ev]) SFX[ev]();
+        if (ev === "land") { cam.shake = Math.max(cam.shake, 0.25 + game.hardLand * 0.75); cam.kick = Math.max(cam.kick, game.hardLand); }
+        if (ev === "walljump") cam.shake = Math.max(cam.shake, 0.35);
+        if (ev === "slide") cam.shake = Math.max(cam.shake, 0.2);
+        if (ev === "fall") cam.shake = 1;
         if (ev === "win" || ev === "lose") { state = "ending"; setTimeout(endGame, ev === "win" ? 2800 : 2200); }
       });
     }
