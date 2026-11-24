@@ -72,13 +72,15 @@ Pick one of four survivors before you start:
 | The Old Sailor | 6 | Hardy, but crossing the bridge costs 1 energy |
 | The Scavenger | 4 | Picking up an item restores 1 energy |
 
-## Illustrated adventure (web)
+## Animated painted side-scroller (web)
 
-The web version is a painted point-and-click adventure. It opens on a boat in a storm, then you land on the beach and walk the island as your chosen survivor.
+The web version is a side-scrolling adventure through one long painted island, from the beach to the lighthouse. You run, jump and climb, and the camera follows you.
 
-- **Walk:** A / D or arrow keys, the on-screen arrows on a phone, or tap the painting to walk there.
-- **Use:** E or Space, the Use button, or tap the glowing object.
-- **Goal:** take the rope (jungle) and the lantern (cave), repair the old bridge, then light the beacon at the lighthouse.
-- **Energy:** walking tires you. The best route costs about 3 energy, so a short detour is fine but wandering loses.
+- **Move:** A / D or arrow keys. **Jump:** W, Up or Space (hold longer to jump higher). **Use:** E.
+- **Phone:** drag the stick on the left to run, tap Jump and Use on the right.
+- **Goal:** take the rope in the jungle, climb the crates in the cave for the lantern, repair the old bridge, then light the beacon at the lighthouse.
+- **Danger:** the chasm has no floor until the bridge is repaired. Falling costs 1 energy and sends you back to the last checkpoint. Running also tires you.
 
-Files: `story.js` (scenes and survivors), `rules.js` (game rules, no browser code), `main.js` (drawing, input, sound).
+Survivors: Castaway (balanced), Explorer (faster, jumps higher, tires slower), Old Sailor (6 energy, bridge repair costs 1), Scavenger (4 energy, pickups restore 1).
+
+Files: `web/world.js` (physics, level and rules, no browser code), `web/main.js` (drawing, animation, input, sound).
