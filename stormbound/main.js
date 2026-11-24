@@ -57,7 +57,7 @@ function startGame(saved) {
   document.body.classList.add("playing"); mode = "play"; paused = false; toast(restored ? "Welcome back. Your progress was restored." : "The boat is gone. The island is all you have. Find the rope.", 5200); SND.click(); lastSaved = 0; persist(true);
 }
 const ctx = {
-  sfx: (n) => SND[n] && SND[n](), startClimb: () => { const lo = { x: player.x, z: player.z, y: player.y }, hi = { x: POI.anchor.x, z: T.WALL_Z - 5, y: T.height(POI.anchor.x, T.WALL_Z - 5) }; player.startClimb(lo, hi); },
+  sfx: (n) => SND[n] && SND[n](), startClimb: () => { const lo = { x: player.x, z: player.z, y: player.y }, hi = { x: POI.anchor.x, z: T.WALL_Z - 12, y: T.height(POI.anchor.x, T.WALL_Z - 12) }; player.startClimb(lo, hi); },
   startTower: () => { towerFrom = { x: player.x, z: player.z }; inTower = true; towerT = 0; },
   generatorOn: () => { L.lights.gen.intensity = 14; L.items.genLamp.material.emissiveIntensity = 3; L.lights.cabin.intensity = 5; document.body.classList.add("power"); },
   beaconOn: () => { beamT = 0.001; L.items.beam.visible = true; L.items.lampGlass.material.emissiveIntensity = 2.4; },
