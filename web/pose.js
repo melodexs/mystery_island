@@ -17,7 +17,7 @@
       this.time = 0;
       this.state = "idle"; this.prevState = "idle";
     }
-    kick(kind) { if (kind === "interact") this.interact = 1; else if (kind === "hurt") this.hurt = 1; }
+    kick(kind) { if (kind === "doublejump") this.airFlip = 1; else if (kind === "interact") this.interact = 1; else if (kind === "hurt") this.hurt = 1; }
 
     // g: the Game; returns the blended pose to draw with
     update(dt, g) {
@@ -25,11 +25,17 @@
       const run = g.c.run, speedN = clamp(Math.abs(g.vx) / run, 0, 1.6), moving = Math.abs(g.vx) > 30;
       if (g.facing !== this.lastFacing) { this.turn = 1; this.lastFacing = g.facing; }
       this.turn = Math.max(0, this.turn - dt * 5.5);
-      this.interact = Math.max(0, this.interact - dt * 2.4); this.hurt = Math.max(0, this.hurt - dt * 3);
+      this.airFlip = Math.max(0, (this.airFlip || 0) - dt * 2.2); this.interact = Math.max(0, this.interact - dt * 2.4); this.hurt = Math.max(0, this.hurt - dt * 3);
 
       // ---- pick the state ----
       let st = "idle";
       if (g.over && !g.won) st = "collapse";
+      else if (g.inWater) st = g.submerged ? "dive" : "swim";
+      else if (g.hang) st = "hang";
+      else if (g.climbing > 0) st = "climbup";
+      else if (g.vaulting > 0) st = "vault";
+      else if (g.rolling > 0) st = "roll";
+      else if (this.airFlip > 0) st = "flip";
       else if (g.sliding > 0) st = "slide";
       else if (!g.onGround && g.wall !== 0) st = "wall";
       else if (!g.onGround) st = g.vy < -250 ? "rise" : g.vy > 300 ? "fall" : "apex";
@@ -60,6 +66,13 @@
         case "crouchwalk": t.sy = 0.74 + step * 0.015; t.sx = 1.08; t.lean = 0.14; t.bob = step * 4; t.sway = side * 0.02; break;
         case "slide": t.sy = 0.62; t.sx = 1.18; t.lean = -0.5; t.drop = -2; break;     // leaning back with the feet forward
         case "wall": t.lean = g.wall * 0.2; t.sy = 1.03; t.sx = 0.98; t.sway = Math.sin(this.time * 9) * 0.012; break;
+        case "swim": { const s = Math.sin(this.time * (3 + Math.abs(g.vx) / 90)); t.sy = 0.94; t.sx = 1.04; t.lean = 0.36 * (Math.abs(g.vx) > 20 ? 1 : 0.4) + s * 0.04; t.bob = 0; t.lift = 0; t.drop = 0 + s * 3; t.sway = s * 0.03; break; }      // body tilted forward, rocking with the stroke
+        case "dive": { const s = Math.sin(this.time * 4); t.sy = 0.9; t.sx = 1.06; t.lean = 1.1 + s * 0.05; t.drop = s * 3; break; }                  // head down, stroking
+        case "hang": { const b = Math.sin(this.time * 3.1); t.sy = 1.12 + b * 0.012; t.sx = 0.9; t.lean = -0.04 + b * 0.012; t.lift = 8; t.sway = Math.sin(this.time * 2.3) * 0.02; break; }   // stretched by the arms, hanging
+        case "climbup": { const k = 1 - g.climbing / CLIMB_TIME; t.sy = 1.06 - 0.3 * Math.sin(k * Math.PI); t.sx = 0.96 + 0.1 * Math.sin(k * Math.PI); t.lean = 0.28 * Math.sin(k * Math.PI); t.lift = 4; break; }
+        case "vault": { const k = 1 - g.vaulting / VAULT_TIME; t.sy = 0.86 + 0.1 * k; t.sx = 1.1 - 0.06 * k; t.lean = 0.3 - 0.35 * k; t.lift = 3; break; }
+        case "roll": { const k = 1 - g.rolling / ROLL_TIME; t.sy = 0.62; t.sx = 1.12; t.tilt = k * Math.PI * 2 * g.facing; t.drop = -2; break; }
+        case "flip": { const k = 1 - this.airFlip; t.sy = 0.96; t.sx = 1.04; t.tilt = k * Math.PI * 2 * g.facing * 0.9; t.lift = 4; break; }
         case "collapse": t.lean = 0.9; t.sy = 0.55; t.sx = 1.1; t.drop = 0; break;
       }
       // turning: a quick squash across the body as you swing round
@@ -72,10 +85,10 @@
       // ---- blend: different channels follow at different speeds so motion feels weighty, not mechanical ----
       // the slide's backward lean is a big swing, so it is eased in and out slowly; everything else is quick
       const leanRate = st === "slide" ? 7 : this.prevState === "slide" ? 6 : 11;
-      const k = { lean: leanRate, bob: 22, sx: st === "land" ? 34 : 18, sy: st === "land" ? 34 : 18, sway: 14, breathe: 8, tilt: 10, drop: 20, lift: 16 };
+      const k = { lean: leanRate, bob: 22, sx: st === "land" ? 34 : 18, sy: st === "land" ? 34 : 18, sway: 14, breathe: 8, tilt: st === "roll" || st === "flip" ? 40 : 14, drop: 20, lift: 16 };
       this.prevState = st;
       // slew limit: no channel may move faster than its cap per second, so a big change of target (sprint to slide to crouch) is always a smooth swing
-      const cap = { lean: 2.4, bob: 260, sx: 5, sy: 5, sway: 1.4, breathe: 20, tilt: 6, drop: 120, lift: 120 };
+      const cap = { lean: 2.4, bob: 260, sx: 5, sy: 5, sway: 1.4, breathe: 20, tilt: 60, drop: 120, lift: 120 };
       for (const c in this.p) { const next = damp(this.p[c], t[c], k[c], dt), maxStep = cap[c] * dt; this.p[c] += Math.max(-maxStep, Math.min(maxStep, next - this.p[c])); }
       return this.p;
     }

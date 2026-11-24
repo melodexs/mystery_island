@@ -39,13 +39,41 @@
     const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
     src.buffer = buf; src.loop = true; f.type = "lowpass"; f.frequency.value = 500; g.gain.value = 0;
     src.connect(f); f.connect(g); g.connect(a.destination); src.start(); amb = { f, g };
+    // a second, lower bed for the chasm water: its loudness follows how close you are, and it is panned toward the side the water is on
+    const ws = a.createBufferSource(), wf = a.createBiquadFilter(), wg = a.createGain(), wp = a.createStereoPanner ? a.createStereoPanner() : null;
+    ws.buffer = buf; ws.loop = true; ws.playbackRate.value = 0.7; wf.type = "lowpass"; wf.frequency.value = 380; wg.gain.value = 0;
+    ws.connect(wf); wf.connect(wg); if (wp) { wg.connect(wp); wp.connect(a.destination); } else wg.connect(a.destination); ws.start(); amb.water = { g: wg, p: wp, f: wf };
   }
-  function updateAmbience(speedFx) { if (!amb || !actx) return; const t = actx.currentTime; amb.g.gain.setTargetAtTime(muted ? 0 : 0.035 + speedFx * 0.05, t, 0.2); amb.f.frequency.setTargetAtTime(500 + speedFx * 900, t, 0.2); }
+  function updateAmbience(speedFx) {
+    if (!amb || !actx) return; const t = actx.currentTime;
+    // the cave (x 1500..2500) closes the sky in: the wind bed goes darker and quieter, and softens again in the open
+    const inCave = game && game.x > 1500 && game.x < 2500; const open = game && game.x < 1500 ? 1 : 0.7;
+    amb.g.gain.setTargetAtTime(muted ? 0 : (0.035 + speedFx * 0.05) * (inCave ? 0.55 : open), t, 0.3);
+    amb.f.frequency.setTargetAtTime((inCave ? 260 : 380) + speedFx * 380, t, 0.3);
+    // the water: loudest at the lip of the chasm, fading out over ~900 units, panned left or right of you; muffled while you are underwater
+    if (amb.water && game) {
+      const mid = (WATER.x0 + WATER.x1) / 2, dx = mid - game.x, edgeDist = Math.max(0, Math.abs(dx) - (WATER.x1 - WATER.x0) / 2);
+      const near = Math.max(0, 1 - edgeDist / 900), vol = muted ? 0 : near * near * 0.16 * (game.submerged ? 0.4 : 1);
+      amb.water.g.gain.setTargetAtTime(vol, t, 0.25);
+      if (amb.water.p) amb.water.p.pan.setTargetAtTime(Math.max(-0.85, Math.min(0.85, dx / 700)), t, 0.2);
+      amb.water.f.frequency.setTargetAtTime(game.submerged ? 160 : 380 + near * 300, t, 0.25);
+    }
+  }
   const SFX = {
     jump:   () => beep(300, .14, "triangle", .05, 260),
     land:   () => noise(.12, 500, .18),
     step:   () => { const cave = game && game.x > 1500 && game.x < 2500, sand = game && game.x < 1500; noise(.05, cave ? 1500 : sand ? 380 : 800, cave ? .09 : .06); if (cave) beep(110, .05, "sine", .02); },
     slide:  () => noise(.5, 900, .12),
+    splash: () => { noise(.35, 900, .2); beep(180, .18, "sine", .06, 90); },
+    exitwater: () => noise(.2, 800, .1),
+    climbout: () => { noise(.3, 700, .12); beep(150, .12, "sine", .04, 110); },
+    breath: () => { beep(520, .12, "square", .04); beep(520, .12, "square", .04, 520, .18); },
+    doublejump: () => { noise(.08, 1400, .08); beep(420, .16, "triangle", .05, 320); },
+    hang:   () => { noise(.1, 700, .12); beep(120, .1, "sine", .04); },
+    climb:  () => { noise(.25, 600, .1); },
+    drop:   () => noise(.1, 500, .08),
+    vault:  () => { noise(.18, 1000, .09); beep(260, .1, "triangle", .03, 180); },
+    roll:   () => { noise(.35, 700, .14); },
     walljump: () => { noise(.1, 1200, .1); beep(340, .12, "triangle", .05, 200); },
     pickup: () => { beep(660, .09, "triangle"); setTimeout(() => beep(990, .14, "triangle"), 90); },
     build:  () => { beep(180, .12, "square", .05); setTimeout(() => beep(240, .12, "square", .05), 120); setTimeout(() => beep(330, .2, "square", .05), 240); },
@@ -225,18 +253,59 @@
     ctx.save(); camT();
     // shadow on whatever you stand on; shrinks as you leave it, widens when you slide
     const lift = game.onGround ? 0 : Math.min(1, (GROUND_Y - game.y) / 300 + 0.2);
-    ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
-    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, (46 + (pose.state === "slide" ? 26 : 0)) * (1 - lift * 0.4) * (1 + P.breathe * 0.01), 9, 0, 0, 7); ctx.fill();
+    if (!game.inWater) { ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
+    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, (46 + (pose.state === "slide" ? 26 : 0)) * (1 - lift * 0.4) * (1 + P.breathe * 0.01), 9, 0, 0, 7); ctx.fill(); }
     // dust puffs
     for (const d of game.dust) { const a = 1 - d.t / 0.5; ctx.fillStyle = `rgba(190,205,200,${0.35 * a})`; ctx.beginPath(); ctx.arc(d.x - cam.x + (d.t * 40) * (d.x % 2 ? 1 : -1), d.y - 6 - d.t * 30, 10 + d.t * 28, 0, 7); ctx.fill(); }
     // the figure, pivoting at the feet: bob and lift raise it, drop sinks it, lean and sway rotate it, sx and sy squash and stretch it
     ctx.translate(px, py - P.bob - P.lift + P.drop);
     ctx.rotate((P.lean + P.sway) * game.facing);
+    if (P.tilt) { ctx.translate(0, -h * 0.4); ctx.rotate(P.tilt); ctx.translate(0, h * 0.4); }
     ctx.scale(game.facing * P.sx, P.sy);
-    ctx.drawImage(img, -w / 2, -h, w, h);
+    if (game.inWater) {
+      // above the waterline: normal. below it: the same painting, darker and bluer, as if seen through the water
+      ctx.drawImage(img, -w / 2, -h, w, h);
+    } else ctx.drawImage(img, -w / 2, -h, w, h);
     ctx.restore();
   }
 
+  /* Water in front of the swimmer: the part below the surface is veiled with the water's own tone (sampled from the painting), with surface ripples and splash droplets. */
+  let waterTone = null;
+  function sampleWaterTone() {
+    // the water's own lit colour, read from the painting: the average of the brightest quarter of the chasm pixels, so the veil is a tone that already exists there
+    try {
+      const c = document.createElement("canvas"); c.width = 96; c.height = 24; const x = c.getContext("2d", { willReadFrequently: true });
+      const p = WORLD_PIECES.find((q) => q.x <= WATER.x0 + 200 && q.x + q.w > WATER.x0 + 200); const img = p && IMG[p.n]; if (!img || !img.naturalWidth) return;
+      x.drawImage(img, WATER.x0 + 20 - p.x, 930, WATER.x1 - WATER.x0 - 40, 94, 0, 0, 96, 24); const d = x.getImageData(0, 0, 96, 24).data;
+      const px = []; for (let i = 0; i < d.length; i += 4) px.push([d[i], d[i + 1], d[i + 2], d[i] + d[i + 1] + d[i + 2]]);
+      px.sort((a, b) => b[3] - a[3]); const top = px.slice(0, Math.floor(px.length / 4)); let r = 0, g = 0, b = 0; for (const q of top) { r += q[0]; g += q[1]; b += q[2]; }
+      waterTone = [Math.round(r / top.length), Math.round(g / top.length), Math.round(b / top.length)];
+    } catch (e) { waterTone = [83, 100, 113]; }
+  }
+  function drawWater(dt, t) {
+    if (!game || (!game.inWater && !game.splashes.length)) return;
+    if (!waterTone) sampleWaterTone(); const [r, g, b] = waterTone || [36, 49, 55];
+    ctx.save(); camT();
+    const sy = WATER.surface, px = game.x - cam.x;
+    if (game.inWater) {
+      // veil over everything below the surface near the swimmer
+      const grad = ctx.createLinearGradient(0, sy, 0, sy + 200); grad.addColorStop(0, `rgba(${r},${g},${b},0.55)`); grad.addColorStop(1, `rgba(${r},${g},${b},0.82)`);
+      ctx.fillStyle = grad; ctx.fillRect(px - 120, sy, 240, 260);
+      // surface line with a gentle wave
+      ctx.strokeStyle = `rgba(170,205,210,0.5)`; ctx.lineWidth = 2; ctx.beginPath();
+      for (let i = -120; i <= 120; i += 6) { const y = sy + Math.sin((i + t * 90) * 0.06) * 2.2; i === -120 ? ctx.moveTo(px + i, y) : ctx.lineTo(px + i, y); } ctx.stroke();
+      // bubbles rise from a diving swimmer
+      if (game.submerged) for (let i = 0; i < 5; i++) { const k = ((t * 0.7 + i * 0.21) % 1), bx = px + Math.sin(i * 7 + t * 2) * 14, by = game.y - 40 - k * 140; ctx.strokeStyle = `rgba(190,225,230,${0.55 * (1 - k)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bx, by, 2 + i % 3, 0, 7); ctx.stroke(); }
+    }
+    // ripple rings and droplets from every splash
+    for (const s of game.splashes) {
+      const a = 1 - s.t / 0.9, sx = s.x - cam.x;
+      ctx.strokeStyle = `rgba(185,215,220,${0.6 * a})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(sx, sy + 2, 14 + s.t * 90 * s.k, 3 + s.t * 14 * s.k, 0, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(sx, sy + 2, 8 + s.t * 55 * s.k, 2 + s.t * 8 * s.k, 0, 0, 7); ctx.stroke();
+      if (s.k > 0.35) for (let i = 0; i < 9; i++) { const ang = -Math.PI / 2 + (i - 4) * 0.28, v = 150 + (i % 3) * 60, dx = Math.cos(ang) * v * s.t * s.k, dy = Math.sin(ang) * v * s.t * s.k + 520 * s.t * s.t; ctx.fillStyle = `rgba(200,225,228,${0.8 * a})`; ctx.beginPath(); ctx.arc(sx + dx, sy + dy, 2.5 * (1 - s.t / 1.2), 0, 7); ctx.fill(); }
+    }
+    ctx.restore();
+  }
   function drawWeather(dt, t) {
     // rain in screen space, drifting with the camera for parallax
     ctx.save(); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -280,6 +349,7 @@
   function placeName() { const x = game.x; return x < 1500 ? (x < 700 ? "Beach" : "Jungle") : x < 2500 ? "Cave" : x < 3290 ? "Old Bridge" : "Lighthouse"; }
   function updateHud() {
     $("hud-loc").textContent = placeName();
+    { const bt = $("breath"); const show = game.submerged || game.breath < 5.95; bt.classList.toggle("on", show); bt.classList.toggle("low", game.breath < 2); $("breath-fill").style.transform = `scaleX(${Math.max(0, game.breath / BREATH_MAX)})`; }
     document.querySelectorAll("#energy .pip").forEach((p, i) => p.classList.toggle("full", i < game.energy));
     const k = game.inventory.join(",");
     if (k !== lastInv) { lastInv = k; const inv = $("inventory"); inv.innerHTML = ""; if (!game.inventory.length) inv.innerHTML = '<span class="empty">empty</span>'; game.inventory.forEach((it) => { const t = document.createElement("span"); t.className = "item"; t.textContent = it; inv.appendChild(t); }); }
@@ -376,6 +446,12 @@
       if (usePressed) { game.interact(); usePressed = false; }
       game.events.splice(0).forEach((ev) => {
         if (SFX[ev]) SFX[ev]();
+        if (ev === "splash") { cam.shake = Math.max(cam.shake, 0.35); }
+        if (ev === "doublejump") { pose.kick("doublejump"); cam.shake = Math.max(cam.shake, 0.12); }
+        if (ev === "roll") { cam.shake = Math.max(cam.shake, 0.3); cam.kick = Math.max(cam.kick, 0.5); }
+        if (ev === "hang") cam.shake = Math.max(cam.shake, 0.22);
+        if (ev === "vault") cam.shake = Math.max(cam.shake, 0.1);
+        if (window.ALIVE && (ev === "roll" || ev === "vault" || ev === "mantle" || ev === "doublejump")) ALIVE.disturb(game.x, game.y, 1.2);
         if (ev === "pickup" || ev === "build" || ev === "deny") pose.kick("interact"); if (ev === "tired") pose.kick("hurt");
         if (window.ALIVE) { if (ev === "step") ALIVE.disturb(game.x, game.y, 0.5 + game.speedFx * 0.6); else if (ev === "land") ALIVE.disturb(game.x, game.y, 0.8 + game.hardLand * 1.6); else if (ev === "slide" || ev === "walljump") ALIVE.disturb(game.x, game.y, 1.1); }
         if (ev === "land") { cam.shake = Math.max(cam.shake, 0.25 + game.hardLand * 0.75); cam.kick = Math.max(cam.kick, game.hardLand); }
@@ -388,7 +464,7 @@
     if (window.ALIVE && game && (state === "playing" || state === "ending")) ALIVE.update(dt, game, cam.x, VW / SCALE, 0);
     updateCamera(dt);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
-    drawWorld(); drawGround(); drawObjects(now); drawPlayer(dt); drawWeather(dt, now); updateHud();
+    drawWorld(); drawGround(); drawObjects(now); drawPlayer(dt); drawWater(dt, now); drawWeather(dt, now); updateHud();
   }
   requestAnimationFrame(frame);
   document.addEventListener("visibilitychange", () => { lastT = performance.now(); acc = 0; });

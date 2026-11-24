@@ -7,6 +7,8 @@
    Everything can be turned off with ALIVE.enabled = false, which restores the original drawing exactly. */
 (() => {
   const ALIVE = { enabled: true, wind: 0.5, windTarget: 0.5, time: 0, strips: 48, gust: 0, nextGust: 6, leaves: [], splashes: [], mist: [], ripple: [], perf: { ms: 0, n: 0, scale: 1 } };
+  ALIVE.birds = []; ALIVE.shadows = []; ALIVE.nextFlock = 3;
+  for (let i = 0; i < 3; i++) ALIVE.shadows.push({ x: Math.random() * 4600 - 300, w: 520 + Math.random() * 420, v: 14 + Math.random() * 12, a: 0.10 + Math.random() * 0.07 });
   for (let i = 0; i < 9; i++) ALIVE.mist.push({ x: Math.random(), y: 0.45 + Math.random() * 0.4, s: 0.35 + Math.random() * 0.5, v: 0.004 + Math.random() * 0.01, a: 0.04 + Math.random() * 0.05 });
 
   ALIVE.update = function (dt, game, camX, viewW, storm) {
@@ -19,6 +21,17 @@
     for (const l of this.leaves) { l.t += dt; l.x += (l.vx + this.wind * 120) * dt; l.y += (l.vy + Math.sin(l.t * 2.4) * 40) * dt; l.r += l.vr * dt; }
     this.leaves = this.leaves.filter((l) => l.x < camX + viewW + 80 && l.y < 960 && l.t < 14);
     for (const m of this.mist) { m.x += m.v * dt * (1 + this.wind); if (m.x > 1.3) m.x = -0.3; }
+    // distant birds crossing the sky in loose flocks, quicker in a gust; they only appear while the player is in the world
+    this.nextFlock -= dt;
+    if (this.nextFlock <= 0 && this.birds.length < 14) {
+      const n = 2 + Math.floor(Math.random() * 4), y0 = 70 + Math.random() * 150, dir = Math.random() < 0.7 ? 1 : -1, x0 = dir > 0 ? camX - 80 : camX + viewW + 80;
+      for (let i = 0; i < n; i++) this.birds.push({ x: x0 - dir * i * (34 + Math.random() * 30), y: y0 + (Math.random() - 0.5) * 50 + i * 6, dir, v: 70 + Math.random() * 30, ph: Math.random() * 6, s: 0.8 + Math.random() * 0.5 });
+      this.nextFlock = 9 + Math.random() * 14;
+    }
+    for (const b of this.birds) { b.x += b.dir * b.v * (1 + this.wind * 0.5) * dt; b.y += Math.sin(this.time * 0.9 + b.ph) * 6 * dt; b.ph += dt * (7 + this.wind * 3); }
+    this.birds = this.birds.filter((b) => b.x > camX - 200 && b.x < camX + viewW + 200);
+    // slow cloud shadows sliding across the land, so the light seems to move with the sky
+    for (const c of this.shadows) { c.x += c.v * dt * (1 + this.wind); if (c.x > 4500) c.x = -c.w; }
     // ripple sources: where the player's feet disturb the ground
     for (const r of this.ripple) r.t += dt; this.ripple = this.ripple.filter((r) => r.t < 0.9);
     for (const s of this.splashes) s.t += dt; this.splashes = this.splashes.filter((s) => s.t < 0.5);
@@ -56,6 +69,18 @@
       const x = m.x * viewW, y = m.y * worldH, r = m.s * viewW * 0.5;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(170,205,205,${m.a * (0.6 + this.wind * 0.5)})`); g.addColorStop(1, "rgba(170,205,205,0)");
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // cloud shadows: wide soft dark patches over the ground band
+    for (const c of this.shadows) {
+      const x = c.x - camX + c.w / 2; if (x < -c.w || x > viewW + c.w) continue;
+      const g = ctx.createRadialGradient(x, worldH * 0.78, 0, x, worldH * 0.78, c.w * 0.6); g.addColorStop(0, `rgba(2,10,12,${c.a})`); g.addColorStop(1, "rgba(2,10,12,0)");
+      ctx.save(); ctx.translate(x, worldH * 0.78); ctx.scale(1, 0.38); ctx.translate(-x, -worldH * 0.78); ctx.fillStyle = g; ctx.fillRect(x - c.w, worldH * 0.78 - c.w, c.w * 2, c.w * 2); ctx.restore();
+    }
+    // birds: dark flapping silhouettes
+    ctx.strokeStyle = "rgba(6,14,16,.8)"; ctx.lineCap = "round";
+    for (const b of this.birds) {
+      const x = b.x - camX, flap = Math.sin(b.ph) * 5 * b.s, w = 9 * b.s; ctx.lineWidth = 1.8 * b.s;
+      ctx.beginPath(); ctx.moveTo(x - w, b.y - flap * b.dir * 0.2 - flap * 0.3); ctx.quadraticCurveTo(x - w * 0.4, b.y - 3 * b.s - flap, x, b.y); ctx.quadraticCurveTo(x + w * 0.4, b.y - 3 * b.s - flap, x + w, b.y - flap * 0.3); ctx.stroke();
     }
     // wind-blown leaves
     ctx.fillStyle = "rgba(70,110,84,.9)";

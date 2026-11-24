@@ -102,3 +102,9 @@ h1.lose { color:var(--warn); text-shadow:0 0 30px rgba(255,138,107,.5),0 4px 18p
   .tbtn.use    { right:1rem; bottom:6.8rem; width:68px; height:68px; }
   .prompt      { bottom:8.6rem; }
 }
+
+/* breath: a thin strip under the energy pips, shown only while swimming; reuses the existing teal */
+.breath { height:4px; width:100%; margin-top:.3rem; border-radius:2px; background:rgba(0,0,0,.5); opacity:0; transition:opacity .25s; overflow:hidden; }
+.breath.on { opacity:1; }
+.breath i { display:block; height:100%; width:100%; background:var(--teal); transform-origin:left; transition:transform .1s linear; }
+.breath.low i { background:#c9503c; }
