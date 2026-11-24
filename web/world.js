@@ -193,7 +193,7 @@ class Game {
     if (this.vy >= 0) {
       const top = this.supportAt(this.x, prevY);
       if (top !== null && this.y >= top && prevY <= top + 10) {
-        if (!wasGround && this.vy > 500) { this.squash = Math.min(1, this.vy / 1400); this.hardLand = Math.min(1, this.vy / 1500); this.events.push("land"); this.dust.push({ x: this.x, y: top, t: 0 }); }
+        if (!wasGround && this.vy > 220) { this.squash = Math.min(1, Math.max(0.28, this.vy / 1400)); this.hardLand = Math.min(1, Math.max(0.1, (this.vy - 220) / 1280)); this.events.push("land"); this.dust.push({ x: this.x, y: top, t: 0 }); }
         this.y = top; this.vy = 0; this.onGround = true;
       }
     }
