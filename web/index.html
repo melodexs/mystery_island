@@ -12,6 +12,20 @@
 <p>A storm has cut you off from the mainland. Explore the island, recover what the lighthouse keeper left behind, and bring the beacon back to life.</p>
 <button id="start" class="btn">Choose your survivor</button>
 </div></section>
+<section id="character-select" class="character-select hidden" aria-label="Choose your survivor">
+  <div class="select-panel">
+    <div class="eyebrow">SURVIVOR SELECTION</div>
+    <h2>CHOOSE YOUR CHARACTER</h2>
+    <p class="select-intro">Pick the survivor you want to take into the storm. You can change your choice before entering the island.</p>
+    <div class="character-grid">
+      <button class="character-card selected" data-character="castaway" type="button"><img src="img/fig_castaway.png" alt="The Castaway"><span class="character-name">THE CASTAWAY</span><span class="character-desc">Rugged and steady</span></button>
+      <button class="character-card" data-character="explorer" type="button"><img src="img/fig_explorer.png" alt="The Explorer"><span class="character-name">THE EXPLORER</span><span class="character-desc">Quick and observant</span></button>
+      <button class="character-card" data-character="sailor" type="button"><img src="img/fig_sailor.png" alt="The Old Sailor"><span class="character-name">THE OLD SAILOR</span><span class="character-desc">Weathered and tough</span></button>
+      <button class="character-card" data-character="scavenger" type="button"><img src="img/fig_scavenger.png" alt="The Scavenger"><span class="character-name">THE SCAVENGER</span><span class="character-desc">Small and resourceful</span></button>
+    </div>
+    <div class="selection-footer"><span id="selected-character-name">SELECTED: THE CASTAWAY</span><button id="confirm-character" class="btn">Enter the island</button></div>
+  </div>
+</section>
 <header id="hud" class="hud hidden"><div class="hud-identity"><img id="hud-character" src="img/fig_castaway.png" alt=""><div><div class="brand">MYSTERY ISLAND <span style="color:#9caa9f">/ STORM WATCH</span></div><div id="objective" class="objective">Find the rope in the jungle</div></div></div>
 <div class="right"><div id="energy" class="energy">♥ ♥ ♥ ♥ ♥</div><div id="inventory" class="inventory">EMPTY</div><div class="stamina"><span id="stamina-fill"></span></div></div></header>
 <div id="interaction-hint" class="hint">E · INTERACT</div><div id="toast" class="toast"></div>
