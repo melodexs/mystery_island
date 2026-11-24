@@ -1,473 +1,233 @@
-/* Mystery Island - animated painted side-scroller: browser layer.
-   Physics and rules live in world.js (Game). This file draws, animates and listens. */
-(() => {
-  const $ = (id) => document.getElementById(id);
-  let state = "title";              // title | select | boat | playing | ending
-  let game = null, chosen = null, muted = false;
+/* MYSTERY ISLAND: Stormbound. Engine glue: scene, camera, loop, HUD. Rules: rules.js. Terrain: terrain.js. Controller: player.js. Non-combat. */
+import * as THREE from "three";
+import { buildWorld } from "./world.js"; import { buildProps } from "./props.js"; import { buildLandmarks } from "./landmarks.js"; import { buildCharacter, poseCharacter } from "./character.js";
+import { audioInit, ambience, thunder, SND, setMuted, isMuted, debugLevels } from "./audio.js"; import { createLog, LOG_PAGES } from "./log.js"; import { Save } from "./save.js"; import { createInput } from "./input.js"; import { buildInteractables, nearest } from "./interact.js";
+const { Game, SURVIVORS, OBJECTIVES, MAX_HEALTH } = window.SB, { Player } = window.SBP, T = window.SBT, POI = T.POI;
+const $ = (id) => document.getElementById(id), clamp = (v, a, b) => Math.min(b, Math.max(a, v)), damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 
-  function show(id) { document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active")); $(id).classList.add("active"); }
+const canvas = $("gl"), renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+const LOW = matchMedia("(max-width: 820px)").matches || (navigator.hardwareConcurrency || 8) <= 4;
+renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1.5 : 2)); renderer.setSize(innerWidth, innerHeight); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1; renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.1, 700);
+const W = buildWorld(scene), P = buildProps(scene, W), L = buildLandmarks(scene, W, P); if (LOW) W.sun.shadow.mapSize.set(1024, 1024);
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+const input = createInput(canvas);
+const klog = createLog({ root: $("logmodal"), body: $("log-body"), title: $("log-title"), date: $("log-date"), count: $("log-count"), prev: $("logprev"), next: $("lognext") });
+const toggleLog = () => { if (!game || mode === "title" || mode === "select") return; if (klog.isOpen()) { klog.close(); logClosedAt = performance.now(); paused = false; } else { klog.openAt(); paused = true; if (document.exitPointerLock) document.exitPointerLock(); } SND.click(); };
 
-  /* ---------------- audio ---------------- */
-  let actx = null;
-  function audio() {
-    if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {} }
-    if (actx && actx.state === "suspended") actx.resume();
-    return actx;
-  }
-  function beep(freq, dur = 0.12, type = "sine", vol = 0.06, slide = 0) {
-    const a = audio(); if (!a || muted) return;
-    const o = a.createOscillator(), g = a.createGain();
-    o.type = type; o.frequency.value = freq;
-    if (slide) o.frequency.linearRampToValueAtTime(freq + slide, a.currentTime + dur);
-    g.gain.setValueAtTime(vol, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
-    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + dur);
-  }
-  function noise(dur, freq, vol) {
-    const a = audio(); if (!a || muted) return;
-    const n = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
-    const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-    f.type = "lowpass"; f.frequency.value = freq; g.gain.value = vol; s.buffer = buf; s.connect(f); f.connect(g); g.connect(a.destination); s.start();
-  }
-  const thunder = () => noise(1.6, 200, 0.4);
-  // continuous wind and rain bed, louder when you move fast
-  let amb = null;
-  function startAmbience() {
-    const a = audio(); if (!a || amb) return;
-    const n = a.sampleRate * 2, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
-    const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-    src.buffer = buf; src.loop = true; f.type = "lowpass"; f.frequency.value = 500; g.gain.value = 0;
-    src.connect(f); f.connect(g); g.connect(a.destination); src.start(); amb = { f, g };
-    // a second, lower bed for the chasm water: its loudness follows how close you are, and it is panned toward the side the water is on
-    const ws = a.createBufferSource(), wf = a.createBiquadFilter(), wg = a.createGain(), wp = a.createStereoPanner ? a.createStereoPanner() : null;
-    ws.buffer = buf; ws.loop = true; ws.playbackRate.value = 0.7; wf.type = "lowpass"; wf.frequency.value = 380; wg.gain.value = 0;
-    ws.connect(wf); wf.connect(wg); if (wp) { wg.connect(wp); wp.connect(a.destination); } else wg.connect(a.destination); ws.start(); amb.water = { g: wg, p: wp, f: wf };
-  }
-  function updateAmbience(speedFx) {
-    if (!amb || !actx) return; const t = actx.currentTime;
-    // the cave (x 1500..2500) closes the sky in: the wind bed goes darker and quieter, and softens again in the open
-    const inCave = game && game.x > 1500 && game.x < 2500; const open = game && game.x < 1500 ? 1 : 0.7;
-    amb.g.gain.setTargetAtTime(muted ? 0 : (0.035 + speedFx * 0.05) * (inCave ? 0.55 : open), t, 0.3);
-    amb.f.frequency.setTargetAtTime((inCave ? 260 : 380) + speedFx * 380, t, 0.3);
-    // the water: loudest at the lip of the chasm, fading out over ~900 units, panned left or right of you; muffled while you are underwater
-    if (amb.water && game) {
-      const mid = (WATER.x0 + WATER.x1) / 2, dx = mid - game.x, edgeDist = Math.max(0, Math.abs(dx) - (WATER.x1 - WATER.x0) / 2);
-      const near = Math.max(0, 1 - edgeDist / 900), vol = muted ? 0 : near * near * 0.16 * (game.submerged ? 0.4 : 1);
-      amb.water.g.gain.setTargetAtTime(vol, t, 0.25);
-      if (amb.water.p) amb.water.p.pan.setTargetAtTime(Math.max(-0.85, Math.min(0.85, dx / 700)), t, 0.2);
-      amb.water.f.frequency.setTargetAtTime(game.submerged ? 160 : 380 + near * 300, t, 0.25);
-    }
-  }
-  const SFX = {
-    jump:   () => beep(300, .14, "triangle", .05, 260),
-    land:   () => noise(.12, 500, .18),
-    step:   () => { const cave = game && game.x > 1500 && game.x < 2500, sand = game && game.x < 1500; noise(.05, cave ? 1500 : sand ? 380 : 800, cave ? .09 : .06); if (cave) beep(110, .05, "sine", .02); },
-    slide:  () => noise(.5, 900, .12),
-    splash: () => { noise(.35, 900, .2); beep(180, .18, "sine", .06, 90); },
-    exitwater: () => noise(.2, 800, .1),
-    climbout: () => { noise(.3, 700, .12); beep(150, .12, "sine", .04, 110); },
-    breath: () => { beep(520, .12, "square", .04); beep(520, .12, "square", .04, 520, .18); },
-    doublejump: () => { noise(.08, 1400, .08); beep(420, .16, "triangle", .05, 320); },
-    hang:   () => { noise(.1, 700, .12); beep(120, .1, "sine", .04); },
-    climb:  () => { noise(.25, 600, .1); },
-    drop:   () => noise(.1, 500, .08),
-    vault:  () => { noise(.18, 1000, .09); beep(260, .1, "triangle", .03, 180); },
-    roll:   () => { noise(.35, 700, .14); },
-    walljump: () => { noise(.1, 1200, .1); beep(340, .12, "triangle", .05, 200); },
-    pickup: () => { beep(660, .09, "triangle"); setTimeout(() => beep(990, .14, "triangle"), 90); },
-    build:  () => { beep(180, .12, "square", .05); setTimeout(() => beep(240, .12, "square", .05), 120); setTimeout(() => beep(330, .2, "square", .05), 240); },
-    deny:   () => beep(140, .18, "sawtooth", .05),
-    tired:  () => beep(260, .25, "sine", .05, -120),
-    fall:   () => beep(400, .6, "sawtooth", .05, -330),
-    win:    () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, .3, "triangle", .07), i * 150)),
-    lose:   () => [330, 262, 196, 130].forEach((f, i) => setTimeout(() => beep(f, .35, "sawtooth", .05), i * 200)),
-  };
-  $("mute").addEventListener("click", () => { muted = !muted; $("mute").textContent = muted ? "Sound off" : "Sound on"; });
+/* ---------- state ---------- */
+let mode = "loading", chosen = "scout", game = null, player = null, avatar = null, avatarK = {}, flashOn = false, t = 0, paused = false, flashT = 0, nextThunder = 6, bolt = 0, inTower = false, towerT = 0, towerFrom = null, shakeT = 0, stepT = 0, beamT = 0, clearT = 0, fallWarn = 0, gustSmooth = 0, sheltered = false, stats = { time: 0, falls: 0 };
+const cam = { yaw: Math.PI, pitch: 0.3, dist: 5.4, pos: new THREE.Vector3(), look: new THREE.Vector3() }; let interactables = [], focus = null;
+const SENS = 0.0042;
 
-  /* ---------------- lightning ---------------- */
-  let boltTimer = null, flash = 0;
-  function startStorm() {
-    stopStorm();
-    const tick = () => {
-      if (state === "playing") { flash = 1; setTimeout(thunder, 300 + Math.random() * 500); }
-      else if (state === "boat") { const el = $("boat-bolt"); el.classList.remove("go"); void el.offsetWidth; el.classList.add("go"); setTimeout(thunder, 400); }
-      boltTimer = setTimeout(tick, 5000 + Math.random() * 8000);
-    };
-    boltTimer = setTimeout(tick, 2500);
-  }
-  function stopStorm() { clearTimeout(boltTimer); }
+/* ---------- title: slow camera pan along the coast toward the lighthouse ---------- */
+function titleCam(dt) { const s = t * 0.045, x = Math.sin(s) * 70 - 10, z = 92 - Math.cos(s * 0.8) * 14; camera.position.set(x, T.height(x, z) + 7 + Math.sin(s * 2) * 1.2, z); camera.lookAt(-4, 24, -92); }
 
-  /* ---------------- art ---------------- */
-  const IMG = {};
-  function load(name, src) { const i = new Image(); i.src = src; IMG[name] = i; return i; }
-  ["world_1", "world_2", "world_3"].forEach((n) => load(n, `img/${n}.jpg`));
-  Object.keys(CHARACTERS).forEach((k) => { load("fig_" + k, `img/fig_${k}.png`); load("face_" + k, `img/${k}.jpg`); });
-  ["boat", "landing", "title"].forEach((n) => load(n, `img/${n}.jpg`));
-  const WORLD_PIECES = [{ n: "world_1", x: 0, w: 1365 }, { n: "world_2", x: 1365, w: 1365 }, { n: "world_3", x: 2730, w: 1366 }];
+/* ---------- survivor cards: each shows a live 3D preview of its own jointed character ---------- */
+function buildCards() {
+  const holder = $("cards"); holder.innerHTML = "";
+  for (const [key, s] of Object.entries(SURVIVORS)) {
+    const b = document.createElement("button"); b.className = "card" + (key === chosen ? " sel" : ""); b.dataset.k = key;
+    b.innerHTML = `<canvas width="300" height="300"></canvas><div class="mono mt-2">${s.tag}</div><div class="nm">${s.name}</div>`; holder.appendChild(b);
+    b.addEventListener("click", () => { chosen = key; document.querySelectorAll(".card").forEach((c) => c.classList.toggle("sel", c === b)); $("perk").textContent = s.perk; SND.click(); });
+  }
+  $("perk").textContent = SURVIVORS[chosen].perk;
+}
+const previews = [];
+function initPreviews() {
+  for (const card of document.querySelectorAll(".card")) {
+    const key = card.dataset.k, cv = card.querySelector("canvas"), r = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true }); r.setSize(300, 300, false); r.setPixelRatio(1);
+    const sc = new THREE.Scene(), cm = new THREE.PerspectiveCamera(30, 1, 0.1, 20); cm.position.set(0, 1.15, 4.3); cm.lookAt(0, 0.95, 0);
+    sc.add(new THREE.HemisphereLight(0xcfe3ea, 0x1b2a2a, 1.6)); const d = new THREE.DirectionalLight(0xffffff, 2.2); d.position.set(2, 3, 3); sc.add(d);
+    const ch = buildCharacter(key); sc.add(ch); previews.push({ r, sc, cm, ch, k: {} });
+  }
+}
 
-  /* ---------------- canvas + camera ---------------- */
-  const cv = $("view"), ctx = cv.getContext("2d");
-  let VW = 0, VH = 0, DPR = 1, SCALE = 1;
-  function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
-    VW = window.innerWidth; VH = window.innerHeight;
-    cv.width = Math.floor(VW * DPR); cv.height = Math.floor(VH * DPR);
-    cv.style.width = VW + "px"; cv.style.height = VH + "px";
-    SCALE = VH / WORLD_H;                       // world height fills the screen height
-  }
-  window.addEventListener("resize", resize); resize();
-  const cam = { x: 0, shake: 0, zoom: 1, kick: 0, ox: 0, oy: 0 };
+/* ---------- starting a run ---------- */
+function startGame(saved) {
+  audioInit(); const restored = saved ? Game.restore(saved) : null; if (restored) chosen = restored.key; const s = SURVIVORS[chosen]; game = restored || new Game(chosen); if (!restored) klog.setUnlocked([]);
+  const sp = POI.spawn; player = new Player(sp.x, sp.z, { sprint: s.sprint, jump: s.jump, crouch: s.crouch }, W.colliders); player.yaw = Math.PI; cam.yaw = 0; cam.pitch = 0.32;
+  if (avatar) scene.remove(avatar); avatar = buildCharacter(chosen); avatar.userData.lightBoost = s.light; scene.add(avatar); avatarK = {}; flashOn = false; inTower = false; stats = { time: 0, falls: 0 };
+  // reset the world's one-way changes so Play Again starts fresh
+  L.items.ropePickup.visible = true; L.items.hangingRope.visible = false; L.items.keyObj.visible = true; L.items.journalObj.visible = true; L.items.fuel1.visible = true; L.items.fuel2.visible = true;
+  L.items.lhDoor.rotation.y = 0; if (L.items._doorPos) L.items.lhDoor.position.copy(L.items._doorPos); else L.items._doorPos = L.items.lhDoor.position.clone();
+  L.items.beam.visible = false; L.items.beamSpot.intensity = 0; L.lights.gen.intensity = 0; L.lights.cabin.intensity = 0; L.items.genLamp.material.emissiveIntensity = 0; L.items.lampGlass.material.emissiveIntensity = 0; clearT = 0; beamT = 0; bolt = 0;
+  interactables = buildInteractables(L, game, ctx); buildInv(); if (restored) applySaved(saved); $("hud").classList.remove("hidden"); $("touch").classList.toggle("hidden", !(input.touchOn || matchMedia("(pointer:coarse)").matches));
+  document.body.classList.add("playing"); mode = "play"; paused = false; toast(restored ? "Welcome back. Your progress was restored." : "The boat is gone. The island is all you have. Find the rope.", 5200); SND.click(); lastSaved = 0; persist(true);
+}
+const ctx = {
+  sfx: (n) => SND[n] && SND[n](), startClimb: () => { const lo = { x: player.x, z: player.z, y: player.y }, hi = { x: POI.anchor.x, z: T.WALL_Z - 12, y: T.height(POI.anchor.x, T.WALL_Z - 12) }; player.startClimb(lo, hi); },
+  startTower: () => { towerFrom = { x: player.x, z: player.z }; inTower = true; towerT = 0; },
+  generatorOn: () => { L.lights.gen.intensity = 14; L.items.genLamp.material.emissiveIntensity = 3; L.lights.cabin.intensity = 5; document.body.classList.add("power"); },
+  beaconOn: () => { beamT = 0.001; L.items.beam.visible = true; L.items.lampGlass.material.emissiveIntensity = 2.4; },
+  showJournal: () => { klog.unlock(["p2", "p3", "p4", "p5"]); persist(true); setTimeout(() => { klog.openAt("p2"); paused = true; if (document.exitPointerLock) document.exitPointerLock(); }, 450); },
+  notePage: (id, msg) => { klog.unlock([id]); persist(true); setTimeout(() => { if (mode === "play") toast(msg, 4200); }, 2600); }          // after the pickup message has been read
+};
 
-  /* ---------------- input ---------------- */
-  const keys = new Set(); let jumpPressed = false, usePressed = false, slidePressed = false;
-  const touch = { dir: 0, jumpHeld: false, sprint: false, crouch: false };
-  window.addEventListener("keydown", (e) => {
-    if (["ArrowLeft", "KeyA"].includes(e.code)) { keys.add("l"); e.preventDefault(); }
-    if (["ArrowRight", "KeyD"].includes(e.code)) { keys.add("r"); e.preventDefault(); }
-    if (["ArrowUp", "KeyW", "Space"].includes(e.code)) { if (!keys.has("j") && state === "playing") jumpPressed = true; keys.add("j"); e.preventDefault(); }
-    if (["ShiftLeft", "ShiftRight"].includes(e.code)) { keys.add("s"); e.preventDefault(); }
-    if (["KeyC", "ControlLeft", "ArrowDown", "KeyS"].includes(e.code)) { if (!keys.has("c") && state === "playing") slidePressed = true; keys.add("c"); e.preventDefault(); }
-    if (e.code === "KeyE" && !e.repeat) { if (state === "playing") usePressed = true; }
-    if ((e.code === "Enter" || e.code === "Space") && state === "boat") { nextStory(); e.preventDefault(); }
-  });
-  window.addEventListener("keyup", (e) => {
-    if (["ArrowLeft", "KeyA"].includes(e.code)) keys.delete("l");
-    if (["ArrowRight", "KeyD"].includes(e.code)) keys.delete("r");
-    if (["ArrowUp", "KeyW", "Space"].includes(e.code)) keys.delete("j");
-    if (["ShiftLeft", "ShiftRight"].includes(e.code)) keys.delete("s");
-    if (["KeyC", "ControlLeft", "ArrowDown", "KeyS"].includes(e.code)) keys.delete("c");
-  });
-  window.addEventListener("blur", () => { keys.clear(); touch.dir = 0; touch.jumpHeld = false; });
+/* ---------- HUD ---------- */
+const INV = [["rope", "🪢", "ROPE"], ["key", "🗝️", "KEY"], ["fuel", "⛽", "FUEL"], ["journal", "📖", "JOURNAL"]];
+function buildInv() { $("inv").innerHTML = INV.map(([k, ic, nm]) => `<div class="slot" id="slot-${k}">${ic}<small>${nm}</small><b id="n-${k}"></b></div>`).join(""); }
+function hud() {
+  const o = OBJECTIVES[Math.min(game.objectiveIndex, 3)]; $("objective").textContent = `${Math.min(game.objectiveIndex + 1, 4)}/4  ${o.title}`; $("objhint").textContent = o.hint;
+  let h = ""; for (let i = 0; i < MAX_HEALTH; i++) h += `<span class="${i < game.health ? "on" : "off"}">♥</span>`; $("hearts").innerHTML = h;
+  const sp = $("stam"); sp.style.width = game.stamina + "%"; sp.classList.toggle("low", game.stamina < 20); $("warm").style.width = game.warmth * 100 + "%"; $("warm").classList.toggle("low", game.warmth < 0.25);
+  for (const [k] of INV) { const has = k === "fuel" ? game.inv.fuel > 0 : game.inv[k]; $("slot-" + k).classList.toggle("has", !!has); $("n-" + k).textContent = k === "fuel" && game.inv.fuel > 0 ? "×" + game.inv.fuel : ""; }
+  const pr = $("prompt"); if (focus) { pr.classList.remove("hidden"); $("prompt-text").textContent = typeof focus.label === "function" ? focus.label() : focus.label; } else pr.classList.add("hidden");
+  $("cold").style.boxShadow = `inset 0 0 ${60 + (1 - game.warmth) * 120}px ${(1 - game.warmth) * 40}px rgba(120,180,240,${(1 - game.warmth) * 0.55})`; $("vignette").style.opacity = game.health <= 2 ? 1 : 0.7;
+}
+let toastT = 0; function toast(msg, ms = 3200) { const el = $("toast"); el.textContent = msg; el.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), ms); }
 
-  // virtual stick (left side): drag left/right
-  const stick = $("stick"), knob = $("knob"); let stickId = null, stickCx = 0;
-  stick.addEventListener("pointerdown", (e) => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (_) {} const r = stick.getBoundingClientRect(); stickCx = r.left + r.width / 2; moveStick(e); e.preventDefault(); });
-  stick.addEventListener("pointermove", (e) => { if (e.pointerId === stickId) moveStick(e); });
-  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touch.dir = 0; touch.far = false; knob.style.transform = "translate(-50%,-50%)"; };
-  stick.addEventListener("pointerup", endStick); stick.addEventListener("pointercancel", endStick); stick.addEventListener("lostpointercapture", endStick);
-  function moveStick(e) {
-    const r = stick.getBoundingClientRect(), half = r.width / 2;
-    const dx = Math.max(-half, Math.min(half, e.clientX - stickCx));
-    knob.style.transform = `translate(calc(-50% + ${dx * 0.7}px), -50%)`;
-    touch.dir = Math.abs(dx) < half * 0.22 ? 0 : (dx > 0 ? 1 : -1);
-    touch.far = Math.abs(dx) > half * 0.92;
-  }
-  const jb = $("btn-jump");
-  jb.addEventListener("pointerdown", (e) => { jumpPressed = true; touch.jumpHeld = true; try { jb.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
-  const jup = () => { touch.jumpHeld = false; };
-  jb.addEventListener("pointerup", jup); jb.addEventListener("pointercancel", jup); jb.addEventListener("lostpointercapture", jup);
-  $("btn-use").addEventListener("pointerdown", (e) => { usePressed = true; e.preventDefault(); });
-  const sb = $("btn-sprint"), cb = $("btn-slide");
-  sb.addEventListener("pointerdown", (e) => { touch.sprint = !touch.sprint; sb.classList.toggle("on", touch.sprint); e.preventDefault(); });
-  cb.addEventListener("pointerdown", (e) => { slidePressed = true; touch.crouch = true; cb.classList.add("on"); try { cb.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
-  const cup = () => { touch.crouch = false; cb.classList.remove("on"); };
-  cb.addEventListener("pointerup", cup); cb.addEventListener("pointercancel", cup); cb.addEventListener("lostpointercapture", cup);
-  document.addEventListener("gesturestart", (e) => e.preventDefault());
+/* ---------- camera: orbit behind the player, pulled in when terrain or trees would block the view ---------- */
+function updateCamera(dt) {
+  const [lx, ly] = input.takeLook(); cam.yaw -= lx * SENS; cam.pitch = clamp(cam.pitch + ly * SENS, -0.25, 1.15);
+  const look = new THREE.Vector3(player.x, player.y + (player.crouching ? 1.0 : 1.5), player.z);
+  const want = cam.dist * (player.sprinting ? 1.12 : 1) * (player.swimming ? 0.9 : 1); let d = want;
+  const dir = new THREE.Vector3(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
+  for (let s = 0.6; s <= want; s += 0.4) { const x = look.x + dir.x * s, y = look.y + dir.y * s, z = look.z + dir.z * s; if (y < T.height(x, z) + 0.35) { d = Math.max(1.1, s - 0.5); break; } }
+  cam.dist = damp(cam.dist, 5.4, 2, dt); const k = d < cam.curD || !cam.curD ? 30 : 7; cam.curD = damp(cam.curD || d, d, k, dt);
+  const sh = shakeT > 0 ? (Math.random() - 0.5) * shakeT * 0.18 : 0;
+  const target = new THREE.Vector3(look.x + dir.x * cam.curD + sh, look.y + dir.y * cam.curD + sh, look.z + dir.z * cam.curD);
+  const gh = T.height(target.x, target.z) + 0.4; if (target.y < gh) target.y = gh; if (W.seaLevelAt && target.y < 0.2 && T.height(target.x, target.z) < 0) target.y = Math.max(target.y, 0.3);
+  cam.pos.lerp(target, 1 - Math.exp(-(mode === "play" ? 40 : 6) * dt)); camera.position.copy(cam.pos); camera.lookAt(look);
+  const fovT = 66 + (player.sprinting ? 7 : 0) + (inTower ? -4 : 0); camera.fov = damp(camera.fov, fovT, 6, dt); camera.updateProjectionMatrix();
+}
 
-  function readInput() {
-    const l = keys.has("l") || touch.dir < 0, r = keys.has("r") || touch.dir > 0;
-    // full-stick push on touch sprints automatically, like a Call of Duty Mobile stick
-    return { dir: (r ? 1 : 0) - (l ? 1 : 0), jump: jumpPressed, jumpHeld: keys.has("j") || touch.jumpHeld,
-             sprint: keys.has("s") || touch.sprint || touch.far, crouch: keys.has("c") || touch.crouch, slide: slidePressed };
-  }
+/* ---------- one gameplay step ---------- */
+function step(dt) {
+  if (game.over) { endTick(dt); return; }
+  stats.time += dt; input.poll();
+  if (input.consume("flashEdge")) { flashOn = !flashOn; SND.click(); }
+  const sp = SURVIVORS[chosen];
+  // movement is camera-relative: rotate the input axes by the camera yaw
+  const fx = input.fx, fz = input.fz, c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+  const mvx = fx * c + fz * s, mvz = -fx * s + fz * c;                 // world-space move vector; forward input is fz = -1
+  const wantsSprint = input.sprint && Math.hypot(fx, fz) > 0.1; const jumpNow = input.consume("jumpEdge");
+  if (!inTower && !player.climbing) {
+    const stamina = { ok: game.stamina > 1 && game.exhausted <= 0 };
+    player.update(dt, { fx: mvx, fz: mvz, jump: jumpNow, sprint: wantsSprint, crouch: input.crouch }, stamina);
+    if (player.jumped) { game.useStamina(6); SND.jump(); }
+    if (player.sprinting) game.useStamina(14 * dt); else game.regenStamina(dt, Math.hypot(fx, fz) > 0.1);
+    if (Math.hypot(fx, fz) > 0.1) player.yaw = lerpAngle(player.yaw, Math.atan2(mvx, mvz), 1 - Math.exp(-14 * dt));   // face the way you move
+  } else if (player.climbing) { player.update(dt, { fx: 0, fz: 0 }, { ok: true }); game.useStamina(0); if (player.climbDone) { player.climbDone = false; toast("You reach the cliff top. The keeper's cabin is just ahead."); } }
+  // landing: fall damage, splash, thump
+  if (player.justLanded > 0.24) { const drop = player.landed; if (drop > 1.5) { SND.land(drop); shakeT = clamp(drop / 10, 0.1, 0.9); } const hearts = game.land(drop, false); if (hearts) { SND.hurt(); shakeT = 1; stats.falls++; toast(hearts > 1 ? "A brutal fall. You are badly hurt." : "You land hard."); } player.justLanded = 0; player.landed = 0; }
+  if (player.splash) { SND.splash(); player.splash = 0; if (player.vy < -6) shakeT = 0.3; }
+  if (player.swimming && player.fallStart - player.y > 5) player.fallStart = player.y;
+  // footsteps
+  if (player.onGround && player.speed > 1.2) { stepT -= dt * player.speed; if (stepT <= 0) { stepT = 2.6; SND.step(player.sprinting, surfaceAt(player)); } } else stepT = 0;
+  // weather hazards: shelter = inside the cabin or shed footprint, or in the lamp room
+  const nearGen = game.flags.generatorOn && Math.hypot(player.x - POI.shed.x, player.z - POI.shed.z) < 9; sheltered = inTower || inBuilding(player, POI.cabin, 3.8, 3) || inBuilding(player, POI.shed, 3.2, 2.7);
+  game.tickWeather(dt, !sheltered && !player.swimming, nearGen);
+  const gust = window.SB.Game.gust(game.time); gustSmooth = damp(gustSmooth, gust, 4, dt); if (gust > 0.7 && !sheltered && !game._gustWarned) { game._gustWarned = true; toast(game.warmth < 0.6 ? "The cold is getting to you. Find shelter." : "A cold gust rolls in. Get out of the wind."); } if (gust < 0.1) game._gustWarned = false;
+  if (gust > 0.3 && !sheltered && player.onGround) { const push = gust * 0.9 / sp.endure; player.x += Math.sin(1.1) * push * dt; player.z += Math.cos(1.1) * push * dt; }
+  // interact prompt + press
+  focus = nearest(interactables, player, sp.scan, inTower); const useNow = input.consume("useEdge");
+  if (useNow && !player.climbing && !inTower) avatarK.reach = 1;                          // E always plays the reach animation, even with nothing in range
+  if (focus && useNow && !player.climbing) { const msg = focus.act(); if (msg) toast(msg, focus.id === "cabin" ? 3000 : 3600); }
+  else if (useNow && !focus) SND.click();
+  if (game.objectiveIndex !== lastObj) { lastObj = game.objectiveIndex; persist(true); } else persist(false);
+  if (inTower) towerTick(dt);
+  if (game.won) beginWin();
+  if (game.over && !game.won) beginLose();
+}
+function lerpAngle(a, b, k) { let d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI; return a + d * k; }
+function inBuilding(p, c, hx, hz) { return Math.abs(p.x - c.x) < hx && Math.abs(p.z - c.z) < hz && p.y < T.height(c.x, c.z) + 4; }
+function surfaceAt(p) { const h = p.y; if (h < 2 && p.z > 40) return "sand"; if (inBuilding(p, POI.cabin, 3.8, 3)) return "wood"; return T.height(p.x, p.z) > 12 ? "rock" : "grass"; }
 
-  /* ---------------- drawing ---------------- */
-  // world transform: base scale, then zoom about the screen centre, then shake and landing kick
-  function camT() {
-    const s = DPR * SCALE * cam.zoom, cx = cv.width / 2, cy = cv.height * 0.62;
-    ctx.setTransform(s, 0, 0, s, cx - cx * cam.zoom + cam.ox * DPR, cy - cy * cam.zoom + cam.oy * DPR);
-  }
-  const fx = { rain: Array.from({ length: 150 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() })) };
+/* the lighthouse stair: a scripted spiral up the tower, then you stand at the lamp */
+function towerTick(dt) {
+  towerT = Math.min(1, towerT + dt / 4.2); const e = towerT * towerT * (3 - 2 * towerT), a = e * Math.PI * 7, r = 2.1, c = POI.lighthouse, top = L.items.lhTopY - T.height(c.x, c.z) + 0.6;
+  if (towerT < 1) { player.x = c.x + Math.sin(a) * r * (1 - e * 0.35); player.z = c.z + Math.cos(a) * r * (1 - e * 0.35); player.y = T.height(c.x, c.z) + 0.2 + e * (top - 0.2); player.vx = player.vz = 0; player.speed = 3; cam.yaw = lerpAngle(cam.yaw, a + Math.PI, 0.05); }
+  else { player.x = c.x + 0.4; player.z = c.z + 0.6; player.y = T.height(c.x, c.z) + top; player.speed = 0; }
+}
+/* ending: beam sweeps, storm clears; or a quiet game over */
+function beginWin() { if (mode === "end") return; mode = "ending"; SND.win(); clearT = 0; endAt = performance.now() + 7000; toast("The beam sweeps the sea. The storm breaks.", 6000); }
+function beginLose() { if (mode === "end") return; mode = "ending"; endAt = performance.now() + 1800; }
+let endAt = 0;
+function endTick(dt) {
+  if (mode === "ending" && performance.now() > endAt) { mode = "end"; showEnd(); }
+}
+function showEnd() {
+  if (game.won) { Save.markComplete(chosen, Math.round(stats.time)); } else { Save.clear(); }
+  const won = game.won, m = Math.floor(stats.time / 60), s = Math.floor(stats.time % 60); $("end").classList.remove("hidden"); document.exitPointerLock && document.exitPointerLock();
+  $("end-kicker").textContent = won ? "THE BEACON BURNS" : "THE ISLAND WINS THIS TIME"; $("end-title").textContent = won ? "The storm is over." : "You couldn't hold on.";
+  $("end-text").textContent = won ? "The lighthouse sweeps the black water, and far off on the mainland, somebody sees it." : "Cold and bruises caught up with you. Wash ashore again and try a different route.";
+  $("end-stats").textContent = `${SURVIVORS[chosen].name}  •  ${m}m ${String(s).padStart(2, "0")}s  •  ${stats.falls} hard fall${stats.falls === 1 ? "" : "s"}  •  ${game.health}/5 hearts`;
+}
 
-  function drawWorld() {
-    const W = VW / SCALE;                                  // visible world width in world units
-    const parallaxX = cam.x * 0.0;                          // painting is the main layer; storm layer below drifts
-    ctx.save(); camT();
-    ctx.fillStyle = "#04100f"; ctx.fillRect(0, 0, VW / SCALE, WORLD_H);
-    for (const p of WORLD_PIECES) {
-      const img = IMG[p.n]; if (!img.complete || !img.naturalWidth) continue;
-      const sx = p.x - cam.x;
-      if (sx + p.w < -2 || sx > W + 2) continue;
-      if (window.ALIVE) ALIVE.drawPiece(ctx, img, sx, p.w, WORLD_H, game ? game.x : 0, game ? game.y : 0, GROUND_Y, p.x); else ctx.drawImage(img, sx, 0, p.w + 1, WORLD_H);
-    }
-    if (window.ALIVE) ALIVE.drawOverlay(ctx, W, WORLD_H, cam.x);
-    ctx.restore();
-  }
+/* ---------- world animation: storm, thunder, lights, beam, clearing sky ---------- */
+function worldTick(dt) {
+  W.animated.forEach((f) => f(t, dt)); const gust = game ? gustSmooth : 0.2, wind = gust; W.windU.uWind.value = wind * 2.2; W.windU.uTime.value = t;
+  const cl = clearT; // 0 storm .. 1 clear
+  const dark = 1 - cl * 0.7; W.hemi.intensity = (0.85 + bolt * 2) * (0.7 + cl * 0.7); W.sun.intensity = (1.4 + bolt * 3) * (0.6 + cl * 0.9);
+  scene.fog.density = 0.0085 * (1 - cl * 0.55); scene.background.setRGB(0.11 + cl * 0.2, 0.165 + cl * 0.22, 0.19 + cl * 0.3 + bolt * 0.3); scene.fog.color.copy(scene.background); renderer.toneMappingExposure = 1.1 + bolt * 0.4;
+  W.rain.material.opacity = 0.45 * (1 - cl); W.rain.visible = cl < 0.98;
+  nextThunder -= dt; if (nextThunder <= 0 && cl < 0.5) { nextThunder = 9 + Math.random() * 16; bolt = 1; flashT = 0; setTimeout(thunder, 500 + Math.random() * 1400); } bolt = Math.max(0, bolt - dt * 3.2); W.flash.intensity = bolt * 1200;
+  if (beamT > 0) { beamT += dt; L.items.beam.rotation.y += dt * 0.9; L.items.beamSpot.intensity = Math.min(1, beamT) * 9000; clearT = clamp(beamT / 7, 0, 1); }
+  if (L.items.lampGlass.material.emissiveIntensity > 0 && beamT === 0) L.items.lampGlass.material.emissiveIntensity = 0;
+  ambience(gust, 1 - cl, clamp(1 - Math.max(0, T.height(player ? player.x : 0, player ? player.z : 80)) / 3, 0, 1) * (player && player.z > 60 ? 1 : 0.3), cl > 0.5 || sheltered, genHumLevel(), t);
+}
 
-  function drawGround() {
-    ctx.save(); camT();
-    const W = VW / SCALE;
-    for (const p of game.platforms()) {
-      const sx = p.x - cam.x; if (sx + p.w < -4 || sx > W + 4) continue;
-      const lifted = p.y < GROUND_Y - 20;                  // rocks and crates are raised
-      // soft painted slab: dark top edge with a faint rim light, fading into the scene
-      const g = ctx.createLinearGradient(0, p.y, 0, p.y + (lifted ? 60 : 130));
-      g.addColorStop(0, lifted ? "rgba(46,62,60,.96)" : "rgba(10,18,17,.92)"); g.addColorStop(1, "rgba(4,10,9,0)");
-      ctx.fillStyle = g; ctx.fillRect(sx, p.y, p.w, lifted ? 60 : 130);
-      ctx.fillStyle = lifted ? "rgba(140,200,190,.55)" : "rgba(95,211,196,.18)"; ctx.fillRect(sx, p.y - 1, p.w, 3);
-      if (lifted) {
-        const faceH = GROUND_Y - p.y;                           // the block's body, down to the ground
-        const fg = ctx.createLinearGradient(0, p.y, 0, GROUND_Y); fg.addColorStop(0, "rgba(40,56,54,.96)"); fg.addColorStop(1, "rgba(14,24,23,.96)");
-        ctx.fillStyle = fg; ctx.fillRect(sx, p.y, p.w, faceH);
-        ctx.fillStyle = "rgba(140,200,190,.5)"; ctx.fillRect(sx, p.y, 4, faceH); ctx.fillRect(sx + p.w - 4, p.y, 4, faceH);   // lit side edges
-        ctx.fillStyle = "rgba(0,0,0,.35)"; for (let i = 1; i < 3; i++) ctx.fillRect(sx + 8, p.y + faceH * i / 3, p.w - 16, 3);   // plank or rock seams
-      }
-    }
-    // the broken bridge: show jagged plank stubs on each side until repaired
-    if (!game.bridgeRepaired) {
-      ctx.fillStyle = "rgba(40,28,18,.95)";
-      for (let i = 0; i < 3; i++) { ctx.fillRect(2830 - cam.x - 90 + i * 28, GROUND_Y - 4, 22, 10 + i * 4); ctx.fillRect(3290 - cam.x + 68 - i * 28, GROUND_Y - 4, 22, 10 + i * 4); }
-    } else {
-      ctx.fillStyle = "rgba(112,78,44,.95)";
-      for (let i = 0; i < 20; i++) ctx.fillRect(2830 - cam.x + i * 23, GROUND_Y - 6, 21, 12);
-      ctx.fillStyle = "rgba(200,160,100,.5)"; ctx.fillRect(2830 - cam.x, GROUND_Y - 8, 460, 3);
-    }
-    ctx.restore();
+/* generator hum: loudest beside the shed, still faintly audible across the island once it runs */
+function genHumLevel() { if (!game || !game.flags.generatorOn || !player) return 0; const d = Math.hypot(player.x - POI.shed.x, player.z - POI.shed.z); return clamp(1.15 - d / 70, 0.12, 1); }
+/* ---------- main loop ---------- */
+let last = performance.now(); const clock = { acc: 0 };
+function frame(now) {
+  requestAnimationFrame(frame); let dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (mode === "loading") return;
+  if (!paused) t += dt; if (paused || mode === "title" || mode === "select") frame.prev = now;
+  if (mode === "title" || mode === "select") { W.animated.forEach((f) => f(t, dt)); W.windU.uTime.value = t; W.windU.uWind.value = 0.5 + Math.sin(t * 0.3) * 0.3; titleCam(dt); W.rain.position.set(camera.position.x, camera.position.y - 4, camera.position.z); W.updateRain(dt, camera.position, 0.5); nextThunder -= dt; if (nextThunder <= 0) { nextThunder = 8 + Math.random() * 8; bolt = 1; } bolt = Math.max(0, bolt - dt * 3); W.flash.intensity = bolt * 900; for (const p of previews) { p.k.phase = (p.k.phase || 0) + dt; p.ch.rotation.y = Math.sin(t * 0.7) * 0.55 + 0.25; poseCharacter(p.ch, { speed: 0, onGround: true, swimming: false, climbing: false, crouching: false, sprinting: false, justLanded: 0 }, t, dt, false, p.k); p.r.render(p.sc, p.cm); } }
+  else if (game) {
+    if (klog.isOpen() || performance.now() < logClosedAt + 400) input.pauseEdge = false;   // Esc / P belong to the log while it is open, and for a moment after it closes
+    if (input.consume("pauseEdge") && (mode === "play")) { paused = !paused; $("help").classList.toggle("hidden", !paused); if (paused && document.exitPointerLock) document.exitPointerLock(); }
+    if (!paused) { if (mode === "play" || mode === "ending") { /* fixed sub-steps: a slow frame still advances the game by real time, in small physics-safe slices */ let rem = Math.min(0.25, (now - (frame.prev || now)) / 1000 || dt); for (let n = 0; rem > 1e-4 && n < 8; n++) { const h = Math.min(rem, 1 / 60); step(h); rem -= h; } } frame.prev = now; worldTick(dt); updateCamera(dt); shakeT = Math.max(0, shakeT - dt * 2.4);
+      avatar.position.set(player.x, player.y, player.z); avatar.rotation.y = player.yaw; avatar.userData.lightBoost = SURVIVORS[chosen].light; poseCharacter(avatar, player, t, dt, flashOn, avatarK); avatar.visible = true;
+      W.updateRain(dt, camera.position, gustSmooth); W.sun.position.set(player.x - 60, player.y + 90, player.z + 40); W.sun.target.position.set(player.x, player.y, player.z); W.sun.target.updateMatrixWorld(); hud(); }
   }
+  renderer.render(scene, camera);
+}
 
-  function drawObjects(t) {
-    ctx.save(); camT();
-    for (const o of game.objectsHere()) {
-      const sx = o.x - cam.x; if (sx < -200 || sx > VW / SCALE + 200) continue;
-      const pulse = 0.55 + 0.45 * Math.sin(t / 380);
-      const g = ctx.createRadialGradient(sx, o.y, 0, sx, o.y, o.r);
-      g.addColorStop(0, `rgba(255,215,122,${0.42 * pulse})`); g.addColorStop(1, "rgba(255,215,122,0)");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, o.y, o.r, 0, 7); ctx.fill();
-      // little icon
-      ctx.fillStyle = "#ffd77a"; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 3;
-      if (o.id === "rope") { ctx.beginPath(); ctx.ellipse(sx, o.y, 26, 14, 0, 0, 7); ctx.stroke(); ctx.beginPath(); ctx.ellipse(sx, o.y, 16, 8, 0, 0, 7); ctx.stroke(); }
-      else if (o.id === "lantern") { ctx.fillRect(sx - 12, o.y - 20, 24, 34); ctx.fillStyle = "#fff1b8"; ctx.fillRect(sx - 7, o.y - 14, 14, 22); }
-      else if (o.id === "beacon") { ctx.beginPath(); ctx.arc(sx, o.y, 22, 0, 7); ctx.fill(); }
-    }
-    ctx.restore();
-  }
-
-  /* the painted survivor: the same picture, posed by PoseBlender (idle breathing, walk, run, sprint, jump, fall, land, crouch, slide, turn, wall-cling, interact) */
-  const pose = new PoseBlender();
-  function drawPlayer(dt) {
-    const img = IMG["fig_" + chosen]; if (!img.complete || !img.naturalWidth) return;
-    const P = pose.update(dt, game);
-    const h = PLAYER_H * 1.12, w = h * (img.naturalWidth / img.naturalHeight);
-    const px = game.x - cam.x, py = game.y;
-    ctx.save(); camT();
-    // shadow on whatever you stand on; shrinks as you leave it, widens when you slide
-    const lift = game.onGround ? 0 : Math.min(1, (GROUND_Y - game.y) / 300 + 0.2);
-    if (!game.inWater) { ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
-    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, (46 + (pose.state === "slide" ? 26 : 0)) * (1 - lift * 0.4) * (1 + P.breathe * 0.01), 9, 0, 0, 7); ctx.fill(); }
-    // dust puffs
-    for (const d of game.dust) { const a = 1 - d.t / 0.5; ctx.fillStyle = `rgba(190,205,200,${0.35 * a})`; ctx.beginPath(); ctx.arc(d.x - cam.x + (d.t * 40) * (d.x % 2 ? 1 : -1), d.y - 6 - d.t * 30, 10 + d.t * 28, 0, 7); ctx.fill(); }
-    // the figure, pivoting at the feet: bob and lift raise it, drop sinks it, lean and sway rotate it, sx and sy squash and stretch it
-    ctx.translate(px, py - P.bob - P.lift + P.drop);
-    ctx.rotate((P.lean + P.sway) * game.facing);
-    if (P.tilt) { ctx.translate(0, -h * 0.4); ctx.rotate(P.tilt); ctx.translate(0, h * 0.4); }
-    ctx.scale(game.facing * P.sx, P.sy);
-    if (game.inWater) {
-      // above the waterline: normal. below it: the same painting, darker and bluer, as if seen through the water
-      ctx.drawImage(img, -w / 2, -h, w, h);
-    } else ctx.drawImage(img, -w / 2, -h, w, h);
-    ctx.restore();
-  }
-
-  /* Water in front of the swimmer: the part below the surface is veiled with the water's own tone (sampled from the painting), with surface ripples and splash droplets. */
-  let waterTone = null;
-  function sampleWaterTone() {
-    // the water's own lit colour, read from the painting: the average of the brightest quarter of the chasm pixels, so the veil is a tone that already exists there
-    try {
-      const c = document.createElement("canvas"); c.width = 96; c.height = 24; const x = c.getContext("2d", { willReadFrequently: true });
-      const p = WORLD_PIECES.find((q) => q.x <= WATER.x0 + 200 && q.x + q.w > WATER.x0 + 200); const img = p && IMG[p.n]; if (!img || !img.naturalWidth) return;
-      x.drawImage(img, WATER.x0 + 20 - p.x, 930, WATER.x1 - WATER.x0 - 40, 94, 0, 0, 96, 24); const d = x.getImageData(0, 0, 96, 24).data;
-      const px = []; for (let i = 0; i < d.length; i += 4) px.push([d[i], d[i + 1], d[i + 2], d[i] + d[i + 1] + d[i + 2]]);
-      px.sort((a, b) => b[3] - a[3]); const top = px.slice(0, Math.floor(px.length / 4)); let r = 0, g = 0, b = 0; for (const q of top) { r += q[0]; g += q[1]; b += q[2]; }
-      waterTone = [Math.round(r / top.length), Math.round(g / top.length), Math.round(b / top.length)];
-    } catch (e) { waterTone = [83, 100, 113]; }
-  }
-  function drawWater(dt, t) {
-    if (!game || (!game.inWater && !game.splashes.length)) return;
-    if (!waterTone) sampleWaterTone(); const [r, g, b] = waterTone || [36, 49, 55];
-    ctx.save(); camT();
-    const sy = WATER.surface, px = game.x - cam.x;
-    if (game.inWater) {
-      // veil over everything below the surface near the swimmer
-      const grad = ctx.createLinearGradient(0, sy, 0, sy + 200); grad.addColorStop(0, `rgba(${r},${g},${b},0.55)`); grad.addColorStop(1, `rgba(${r},${g},${b},0.82)`);
-      ctx.fillStyle = grad; ctx.fillRect(px - 120, sy, 240, 260);
-      // surface line with a gentle wave
-      ctx.strokeStyle = `rgba(170,205,210,0.5)`; ctx.lineWidth = 2; ctx.beginPath();
-      for (let i = -120; i <= 120; i += 6) { const y = sy + Math.sin((i + t * 90) * 0.06) * 2.2; i === -120 ? ctx.moveTo(px + i, y) : ctx.lineTo(px + i, y); } ctx.stroke();
-      // bubbles rise from a diving swimmer
-      if (game.submerged) for (let i = 0; i < 5; i++) { const k = ((t * 0.7 + i * 0.21) % 1), bx = px + Math.sin(i * 7 + t * 2) * 14, by = game.y - 40 - k * 140; ctx.strokeStyle = `rgba(190,225,230,${0.55 * (1 - k)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bx, by, 2 + i % 3, 0, 7); ctx.stroke(); }
-    }
-    // ripple rings and droplets from every splash
-    for (const s of game.splashes) {
-      const a = 1 - s.t / 0.9, sx = s.x - cam.x;
-      ctx.strokeStyle = `rgba(185,215,220,${0.6 * a})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(sx, sy + 2, 14 + s.t * 90 * s.k, 3 + s.t * 14 * s.k, 0, 0, 7); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(sx, sy + 2, 8 + s.t * 55 * s.k, 2 + s.t * 8 * s.k, 0, 0, 7); ctx.stroke();
-      if (s.k > 0.35) for (let i = 0; i < 9; i++) { const ang = -Math.PI / 2 + (i - 4) * 0.28, v = 150 + (i % 3) * 60, dx = Math.cos(ang) * v * s.t * s.k, dy = Math.sin(ang) * v * s.t * s.k + 520 * s.t * s.t; ctx.fillStyle = `rgba(200,225,228,${0.8 * a})`; ctx.beginPath(); ctx.arc(sx + dx, sy + dy, 2.5 * (1 - s.t / 1.2), 0, 7); ctx.fill(); }
-    }
-    ctx.restore();
-  }
-  function drawWeather(dt, t) {
-    // rain in screen space, drifting with the camera for parallax
-    ctx.save(); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    ctx.strokeStyle = "rgba(190,225,235,.3)"; ctx.lineWidth = 1; ctx.beginPath();
-    for (const d of fx.rain) {
-      d.y += dt * (1.0 + d.s * .7); d.x -= dt * .12 + (game.vx / 60000);
-      if (d.y > 1) { d.y = -.05; d.x = Math.random() * 1.15; }
-      if (d.x < 0) d.x += 1.1; if (d.x > 1.1) d.x -= 1.1;
-      const x = d.x * VW, y = d.y * VH; ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 13 * d.s);
-    }
-    ctx.stroke();
-    // foreground mist band for depth, moving faster than the world
-    const mx = (-cam.x * SCALE * 1.4) % VW;
-    const g = ctx.createLinearGradient(0, VH * 0.82, 0, VH);
-    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,8,8,.55)"); ctx.fillStyle = g; ctx.fillRect(0, VH * 0.82, VW, VH * 0.18);
-    ctx.restore();
-    if (flash > 0) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = `rgba(212,242,238,${flash * 0.4})`; ctx.fillRect(0, 0, cv.width, cv.height); ctx.restore(); flash = Math.max(0, flash - dt * 2.2); }
-  }
-
-  function updateCamera(dt) {
-    // sprint opens the view a little (feels fast); landings kick the camera down and shake it
-    const wantZoom = 1 - game.speedFx * 0.06;
-    cam.zoom += (wantZoom - cam.zoom) * Math.min(1, dt * 5);
-    cam.shake = Math.max(0, cam.shake - dt * 3.2); cam.kick = Math.max(0, cam.kick - dt * 4);
-    const sh = cam.shake * cam.shake * 14; cam.ox = (Math.random() - 0.5) * sh; cam.oy = (Math.random() - 0.5) * sh + cam.kick * 16;
-    const W = VW / SCALE;
-    const lookAhead = game.facing * Math.min(1, Math.abs(game.vx) / game.c.run) * 130;   // camera leads the run
-    const want = Math.max(0, Math.min(WORLD_W - W, game.x + lookAhead - W * 0.45));
-    cam.x += (want - cam.x) * Math.min(1, dt * 5);
-    cam.x = Math.max(0, Math.min(Math.max(0, WORLD_W - W), cam.x));
-  }
-
-  /* ---------------- HUD ---------------- */
-  function buildHud() {
-    $("hud-face").src = `img/${chosen}.jpg`;
-    $("hud-name").textContent = `${game.name} (${CHARACTERS[chosen].title})`;
-    const en = $("energy"); en.innerHTML = "";
-    for (let i = 0; i < game.maxEnergy; i++) { const p = document.createElement("span"); p.className = "pip"; en.appendChild(p); }
-  }
-  let lastInv = "";
-  function placeName() { const x = game.x; return x < 1500 ? (x < 700 ? "Beach" : "Jungle") : x < 2500 ? "Cave" : x < 3290 ? "Old Bridge" : "Lighthouse"; }
-  function updateHud() {
-    $("hud-loc").textContent = placeName();
-    { const bt = $("breath"); const show = game.submerged || game.breath < 5.95; bt.classList.toggle("on", show); bt.classList.toggle("low", game.breath < 2); $("breath-fill").style.transform = `scaleX(${Math.max(0, game.breath / BREATH_MAX)})`; }
-    document.querySelectorAll("#energy .pip").forEach((p, i) => p.classList.toggle("full", i < game.energy));
-    const k = game.inventory.join(",");
-    if (k !== lastInv) { lastInv = k; const inv = $("inventory"); inv.innerHTML = ""; if (!game.inventory.length) inv.innerHTML = '<span class="empty">empty</span>'; game.inventory.forEach((it) => { const t = document.createElement("span"); t.className = "item"; t.textContent = it; inv.appendChild(t); }); }
-    $("message").textContent = game.message; $("message").style.opacity = game.message ? 1 : 0;
-    const pr = game.over ? "" : game.prompt();
-    $("prompt").textContent = pr ? `${pr}  [E]` : ""; $("prompt").style.opacity = pr ? 1 : 0;
-    $("btn-use").classList.toggle("ready", !!pr);
-    $("goal").textContent = goalText();
-  }
-  function goalText() {
-    if (game.won) return "";
-    const R = game.inventory.includes("rope"), L = game.inventory.includes("lantern");
-    if (!R) return "Goal: find the rope in the jungle";
-    if (!L) return "Goal: climb the crates in the cave for the lantern";
-    if (!game.bridgeRepaired) return "Goal: repair the old bridge";
-    return "Goal: light the beacon at the lighthouse";
-  }
-
-  /* ---------------- boat opening ---------------- */
-  const STORY = [
-    { img: "boat",    text: "The storm came out of nowhere. Your boat is all that is left, and the sea is winning." },
-    { img: "boat",    text: "Through the rain you see a light: a lighthouse on a black island. It flickers, then dies." },
-    { img: "landing", text: "The waves throw you onto the sand. Find a rope and a lantern, fix the bridge, and light the beacon." },
-  ];
-  let storyIdx = 0;
-  function showStory() {
-    const st = STORY[storyIdx]; $("boat-bg").style.backgroundImage = `url('img/${st.img}.jpg')`;
-    const el = $("story-text"); el.textContent = ""; let i = 0; clearInterval(showStory.t);
-    showStory.t = setInterval(() => { el.textContent = st.text.slice(0, ++i); if (i >= st.text.length) clearInterval(showStory.t); }, 22);
-    $("story-next").textContent = storyIdx === STORY.length - 1 ? "Wake on the beach" : "Continue";
-  }
-  function nextStory() {
-    const st = STORY[storyIdx];
-    if ($("story-text").textContent.length < st.text.length) { clearInterval(showStory.t); $("story-text").textContent = st.text; return; }
-    if (++storyIdx >= STORY.length) { beginGame(); return; }
-    showStory();
-  }
-  $("story-next").addEventListener("click", () => { audio(); nextStory(); });
-  $("story-skip").addEventListener("click", () => { clearInterval(showStory.t); beginGame(); });
-
-  /* ---------------- flow ---------------- */
-  function startBoat() { game = new Game(chosen, $("name-input").value.trim()); state = "boat"; storyIdx = 0; show("screen-boat"); showStory(); startStorm(); }
-  function beginGame() {
-    clearInterval(showStory.t);
-    state = "playing"; jumpPressed = usePressed = slidePressed = false; lastInv = "~"; cam.x = 0; lastT = performance.now();
-    show("screen-game"); resize(); buildHud(); startAmbience();
-    game.say(`${game.name}, find the rope and the lantern. Light the beacon.`, 5); startStorm();
-  }
-  function endGame() {
-    stopStorm(); const title = $("end-title"), text = $("end-text");
-    if (game.won) { title.textContent = "YOU WIN!"; title.className = "win"; text.textContent = `The beacon blazes. The rescue boat is coming. You survived the island, ${game.name}.`; $("end-bg").style.backgroundImage = "url('img/title.jpg')"; }
-    else { title.textContent = "GAME OVER"; title.className = "lose"; text.textContent = "The island claims another traveler."; $("end-bg").style.backgroundImage = "url('img/world_2.jpg')"; }
-    state = "title"; show("screen-end");
-  }
-
-  function buildCards() {
-    const box = $("cards"); box.innerHTML = "";
-    Object.entries(CHARACTERS).forEach(([key, c]) => {
-      const card = document.createElement("button"); card.type = "button"; card.className = "card"; card.dataset.key = key;
-      card.innerHTML = `<img src="img/${key}.jpg" alt="${c.title}"><span class="c-title">${c.title}</span><span class="c-blurb">${c.blurb}</span><span class="c-perk">${c.perk}</span>`;
-      card.addEventListener("click", () => { chosen = key; document.querySelectorAll(".card").forEach((x) => x.classList.toggle("sel", x.dataset.key === key)); $("begin").disabled = false; });
-      box.appendChild(card);
-    });
-  }
-  $("start").addEventListener("click", () => { audio(); chosen = null; $("begin").disabled = true; buildCards(); state = "select"; show("screen-select"); });
-  $("name-form").addEventListener("submit", (e) => { e.preventDefault(); audio(); if (!chosen) return; if (!$("name-input").value.trim()) { $("name-error").hidden = false; return; } $("name-error").hidden = true; startBoat(); });
-  $("quit").addEventListener("click", () => { if (state === "playing") { game.over = true; game.won = false; endGame(); } });
-  $("again").addEventListener("click", () => { $("name-input").value = ""; state = "title"; show("screen-title"); });
-
-  /* is the player pressed up against the side of a raised rock or crate? */
-  function blockedByBlock(dir) {
-    for (const p of game.platforms()) {
-      if (p.y >= GROUND_Y - 5) continue;
-      const edge = dir > 0 ? p.x - (game.x + PLAYER_W / 2) : (game.x - PLAYER_W / 2) - (p.x + p.w);
-      if (edge > -6 && edge < 8) return true;
-    }
-    return false;
-  }
-
-  /* ---------------- loop ---------------- */
-  let lastT = performance.now(), hinted = false;
-  const STEP = 1 / 120; let acc = 0;
-  function frame(now) {
-    requestAnimationFrame(frame);
-    const dt = Math.min((now - lastT) / 1000, 0.05); lastT = now;
-    if (state !== "playing" && state !== "ending") return;
-    if (state === "playing") {
-      const input = readInput(); acc += dt;                      // fixed physics step keeps jumps identical on every device
-      let first = true;
-      while (acc >= STEP) { game.update(STEP, { dir: input.dir, jump: first && input.jump, jumpHeld: input.jumpHeld, sprint: input.sprint, crouch: input.crouch, slide: first && input.slide }); first = false; acc -= STEP; }
-      if (!hinted && game.onGround && input.dir !== 0 && Math.abs(game.vx) < 5 && blockedByBlock(input.dir)) { hinted = true; game.say("Jump to climb it. Jump again against its wall to wall-jump.", 5); }
-      jumpPressed = false; slidePressed = false;
-      updateAmbience(game.speedFx);
-      if (usePressed) { game.interact(); usePressed = false; }
-      game.events.splice(0).forEach((ev) => {
-        if (SFX[ev]) SFX[ev]();
-        if (ev === "splash") { cam.shake = Math.max(cam.shake, 0.35); }
-        if (ev === "doublejump") { pose.kick("doublejump"); cam.shake = Math.max(cam.shake, 0.12); }
-        if (ev === "roll") { cam.shake = Math.max(cam.shake, 0.3); cam.kick = Math.max(cam.kick, 0.5); }
-        if (ev === "hang") cam.shake = Math.max(cam.shake, 0.22);
-        if (ev === "vault") cam.shake = Math.max(cam.shake, 0.1);
-        if (window.ALIVE && (ev === "roll" || ev === "vault" || ev === "mantle" || ev === "doublejump")) ALIVE.disturb(game.x, game.y, 1.2);
-        if (ev === "pickup" || ev === "build" || ev === "deny") pose.kick("interact"); if (ev === "tired") pose.kick("hurt");
-        if (window.ALIVE) { if (ev === "step") ALIVE.disturb(game.x, game.y, 0.5 + game.speedFx * 0.6); else if (ev === "land") ALIVE.disturb(game.x, game.y, 0.8 + game.hardLand * 1.6); else if (ev === "slide" || ev === "walljump") ALIVE.disturb(game.x, game.y, 1.1); }
-        if (ev === "land") { cam.shake = Math.max(cam.shake, 0.25 + game.hardLand * 0.75); cam.kick = Math.max(cam.kick, game.hardLand); }
-        if (ev === "walljump") cam.shake = Math.max(cam.shake, 0.35);
-        if (ev === "slide") cam.shake = Math.max(cam.shake, 0.2);
-        if (ev === "fall") cam.shake = 1;
-        if (ev === "win" || ev === "lose") { state = "ending"; setTimeout(endGame, ev === "win" ? 2800 : 2200); }
-      });
-    }
-    if (window.ALIVE && game && (state === "playing" || state === "ending")) ALIVE.update(dt, game, cam.x, VW / SCALE, 0);
-    updateCamera(dt);
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
-    drawWorld(); drawGround(); drawObjects(now); drawPlayer(dt); drawWater(dt, now); drawWeather(dt, now); updateHud();
-  }
-  requestAnimationFrame(frame);
-  document.addEventListener("visibilitychange", () => { lastT = performance.now(); acc = 0; });
-
-  window.__game = { get game() { return game; }, get state() { return state; }, get cam() { return cam; }, get scale() { return SCALE; } };
-})();
+/* ---------- save / resume ---------- */
+let lastSaved = 0, lastObj = 0, logClosedAt = 0;
+const CHECKPOINTS = { 0: "beach", 1: "ruins", 2: "cabin", 3: "shed" };
+function checkpointPos(game) {          // where to stand when resuming: the start of the current objective, never mid-air or inside the cliff
+  const o = game.objectiveIndex, P = POI;
+  if (o >= 3 && game.flags.generatorOn) return { x: P.lighthouse.x + 2, z: P.lighthouse.z + 9 };
+  if (o >= 2) return { x: P.cabin.x + 1.4, z: P.cabin.z + 4.5 };
+  if (o === 1) return { x: P.anchor.x, z: P.anchor.z + 5 };
+  return { x: P.spawn.x, z: P.spawn.z };
+}
+function persist(force) {
+  if (!game || game.over || game.won) return; const now = performance.now(); if (!force && now - lastSaved < 4000) return; lastSaved = now;
+  const s = game.snapshot(); s.logPages = klog.unlocked(); s.at = checkpointPos(game); s.stats = { falls: stats.falls }; Save.write(s);
+}
+function applySaved(d) {                 // replay the one-way changes so the world matches the progress, then stand at the checkpoint
+  const f = game.flags, I = L.items; klog.setUnlocked(d.logPages || []); stats.falls = (d.stats && d.stats.falls) || 0; stats.time = game.time;
+  if (game.inv.rope || f.ropeAnchored) I.ropePickup.visible = false; if (f.ropeAnchored) I.hangingRope.visible = true;
+  if (f.cabinSearched) { I.keyObj.visible = false; I.journalObj.visible = false; } if (game.fuelFound.beach) I.fuel1.visible = false; if (game.fuelFound.cabin) I.fuel2.visible = false;
+  if (f.generatorOn) ctx.generatorOn(); if (f.lighthouseOpen) { I.lhDoor.rotation.y = -1.7; I.lhDoor.position.x += 0.7; I.lhDoor.position.z += 0.5; }
+  const at = checkpointPos(game); player.x = at.x; player.z = at.z; player.y = T.height(at.x, at.z); player.vx = player.vz = player.vy = 0; player.onGround = true; player.fallStart = player.y;
+  const face = game.objectiveIndex >= 2 ? Math.PI : 0; cam.yaw = face; cam.pos.set(player.x, player.y + 3, player.z + 5);
+}
+function showResume(d) {
+  const o = OBJECTIVES[Math.min(Math.max(0, (Game.restore(d) || { objectiveIndex: 0 }).objectiveIndex), 3)], sv = SURVIVORS[d.key];
+  $("resume-title").textContent = sv.name; $("resume-text").textContent = `Objective ${Math.min((Game.restore(d) || { objectiveIndex: 0 }).objectiveIndex + 1, 4)}/4: ${o.title}. ${d.health}/5 hearts.`; show("resume");
+  $("resume-go").onclick = () => { show(null); previews.length = 0; startGame(d); }; $("resume-new").onclick = () => { Save.clear(); mode = "select"; show("select"); buildCards(); initPreviews(); };
+}
+/* mute + log buttons and shortcuts */
+function syncMute() { const m = isMuted(); $("mutebtn").setAttribute("aria-pressed", m ? "true" : "false"); $("mutebtn").setAttribute("aria-label", m ? "Unmute sound" : "Mute sound"); $("muteicon").textContent = m ? "🔇" : "🔊"; }
+function toggleMute() { audioInit(); setMuted(!isMuted()); syncMute(); }
+$("mutebtn").addEventListener("click", toggleMute); $("logbtn").addEventListener("click", toggleLog); $("logclose").addEventListener("click", toggleLog); $("logprev").addEventListener("click", () => { klog.flip(-1); SND.click(); }); $("lognext").addEventListener("click", () => { klog.flip(1); SND.click(); });
+addEventListener("keydown", (e) => { if (e.repeat) return; if (e.code === "KeyM") toggleMute(); if (e.code === "KeyL") toggleLog(); if ((e.code === "Escape" || e.code === "KeyP") && klog.isOpen()) { klog.close(); logClosedAt = performance.now(); paused = false; input.pauseEdge = false; } });
+syncMute();
+/* ---------- screens ---------- */
+function show(id) { for (const s of ["title", "select", "help", "end", "loading", "resume"]) $(s).classList.toggle("hidden", s !== id); }
+$("deploy").addEventListener("click", () => { audioInit(); SND.click(); const sv = Save.read(); if (sv && !sv.complete && Game.restore(sv)) { mode = "select"; showResume(sv); return; } mode = "select"; show("select"); buildCards(); initPreviews(); if (sv && sv.complete && SURVIVORS[sv.key]) $("perk").textContent = `You lit the beacon as ${SURVIVORS[sv.key].name}. Pick someone new for a different route.`; });
+$("enter").addEventListener("click", () => { show(null); previews.length = 0; startGame(); });
+$("again").addEventListener("click", () => { $("end").classList.add("hidden"); klog.close(); mode = "select"; document.body.classList.remove("playing", "power"); $("hud").classList.add("hidden"); if (avatar) avatar.visible = false; clearT = 0; beamT = 0; show("select"); buildCards(); initPreviews(); });
+$("helpbtn").addEventListener("click", () => { paused = true; $("help").classList.remove("hidden"); });
+$("helpclose").addEventListener("click", () => { paused = false; $("help").classList.add("hidden"); });
+addEventListener("blur", () => { if (mode === "play") { paused = true; $("help").classList.remove("hidden"); } });
+requestAnimationFrame(() => { mode = "title"; show("title"); }); requestAnimationFrame(frame);
+window.__sb = { audio: debugLevels, get avatar() { return avatar; }, get avatarK() { return avatarK; }, klog, get game() { return game; }, get player() { return player; }, get mode() { return mode; }, get inTower() { return inTower; }, cam, input, scene, camera, W, L, T, startGame, setChosen: (k) => (chosen = k), get focus() { return focus; }, get paused() { return paused; }, interact: () => { input.useEdge = true; }, ctx };

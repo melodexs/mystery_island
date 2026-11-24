@@ -1,39 +1,79 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#071014"><title>Mystery Island — Stormbound</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>MYSTERY ISLAND: Stormbound</title><meta name="theme-color" content="#0b1418">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1418'/%3E%3Cpath d='M16 5l3 14h-6z' fill='%23f1d9a0'/%3E%3Crect x='11' y='19' width='10' height='8' fill='%234a8a8a'/%3E%3C/svg%3E">
+<script src="https://cdn.tailwindcss.com"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
-<link rel="stylesheet" href="third-person.css">
-</head>
-<body>
-<div id="world"></div><div class="vignette"></div>
-<section id="intro" class="intro"><div class="intro-card">
-<div class="eyebrow">OPEN-WORLD SURVIVAL • SINGLE PLAYER</div><h1>MYSTERY<br>ISLAND</h1>
-<p>A storm has cut you off from the mainland. Explore the island, recover what the lighthouse keeper left behind, and bring the beacon back to life.</p>
-<button id="start" class="btn">Deploy to the island</button>
-</div></section>
-<section id="character-select" class="character-select hidden" aria-label="Choose your survivor">
-  <div class="select-panel">
-    <div class="eyebrow">FIELD OPERATIVE SELECT</div>
-    <h2>SELECT YOUR OPERATIVE</h2>
-    <p class="select-intro">Choose a field-ready survivor. Your operator loads into the world as a fully rigged 3D character.</p>
-    <div class="character-grid">
-      <button class="character-card selected" data-character="castaway" type="button"><span class="operator-index">01 / RECON</span><span class="operator-mark">RS</span><span class="character-name">ISLAND SCOUT</span><span class="character-desc">Light kit • agile movement</span></button>
-      <button class="character-card" data-character="explorer" type="button"><span class="operator-index">02 / SUPPORT</span><span class="operator-mark">RO</span><span class="character-name">RADIO OPERATOR</span><span class="character-desc">Field pack • steady pace</span></button>
-      <button class="character-card" data-character="sailor" type="button"><span class="operator-index">03 / LEAD</span><span class="operator-mark">TL</span><span class="character-name">TEAM LEADER</span><span class="character-desc">Heavy kit • resilient build</span></button>
-      <button class="character-card" data-character="scavenger" type="button"><span class="operator-index">04 / STEALTH</span><span class="operator-mark">BO</span><span class="character-name">BLACK OPS</span><span class="character-desc">Dark kit • low profile</span></button>
-    </div>
-    <div class="selection-footer"><span id="selected-character-name">SELECTED: ISLAND SCOUT</span><button id="confirm-character" class="btn">Enter the island</button></div>
+<link rel="stylesheet" href="style.css">
+<script src="rules.js"></script><script src="terrain.js"></script><script src="player.js"></script>
+</head><body class="bg-black text-slate-100 select-none">
+<canvas id="gl"></canvas>
+
+<!-- TITLE -->
+<section id="title" class="screen">
+  <div class="panel title-panel">
+    <div class="mono tracking-[0.35em] text-teal-300/80 text-xs mb-3">OPEN-WORLD SURVIVAL • SINGLE PLAYER</div>
+    <h1 class="title-h">MYSTERY<br>ISLAND</h1>
+    <div class="mono text-teal-200/70 tracking-[0.5em] text-sm mt-2">STORMBOUND</div>
+    <p class="text-slate-300/90 max-w-md mt-6 leading-relaxed">A storm has cut you off from the mainland. Explore the island, recover what the lighthouse keeper left behind, and bring the beacon back to life.</p>
+    <button id="deploy" class="btn-primary mt-8">Head to the island</button>
+    <div class="mono text-[11px] text-slate-400/70 mt-6">No combat. No enemies. Just you, the storm, and the island.</div>
   </div>
 </section>
-<header id="hud" class="hud hidden"><div class="hud-identity"><span id="hud-character" aria-hidden="true">MI</span><div><div class="brand">MYSTERY ISLAND <span style="color:#9caa9f">/ FIELD OPERATIONS</span></div><div id="objective" class="objective">Find the rope in the jungle</div></div></div>
-<div class="right"><div id="energy" class="energy">♥ ♥ ♥ ♥ ♥</div><div id="inventory" class="inventory">EMPTY</div><div class="stamina"><span id="stamina-fill"></span></div></div></header>
-<div id="interaction-hint" class="hint">E · INTERACT</div><div id="toast" class="toast"></div>
-<button id="help" class="help">CONTROLS</button>
-<div class="mobile">
-<div class="cluster"><button data-hold="forward">▲</button><button data-hold="left">◀</button><button data-hold="back">▼</button><button data-hold="right">▶</button></div>
-<div class="cluster"><button data-hold="sprint">SPRINT</button><button id="mobile-jump">JUMP</button><button id="mobile-use">USE</button></div>
+
+<!-- SURVIVOR SELECT -->
+<section id="select" class="screen hidden">
+  <div class="panel select-panel">
+    <div class="mono tracking-[0.3em] text-teal-300/80 text-xs">CHOOSE YOUR SURVIVOR</div>
+    <h2 class="text-2xl md:text-3xl font-semibold mt-1 mb-4">Who washes ashore?</h2>
+    <div id="cards" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+    <div class="flex items-center justify-between mt-5 gap-3 flex-wrap"><div id="perk" class="text-sm text-slate-300/90"></div><button id="enter" class="btn-primary">Enter the island</button></div>
+  </div>
+</section>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="topleft" class="hud-card">
+    <div class="flex items-center gap-2"><span class="badge">MI</span><div><div class="mono text-[10px] tracking-[0.25em] text-teal-300/80">MYSTERY ISLAND</div><div class="mono text-[10px] tracking-[0.2em] text-slate-400">FIELD NOTES</div></div></div>
+    <div id="objective" class="obj mt-2"></div><div id="objhint" class="text-[11px] text-slate-400 mt-0.5"></div>
+    <div id="hearts" class="hearts mt-2" aria-label="health"></div>
+    <div class="bar mt-1.5" title="stamina"><i id="stam"></i></div>
+    <div class="bar warm mt-1" title="warmth"><i id="warm"></i></div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <div id="prompt" class="prompt hidden"><span class="kbd">E</span> <span id="prompt-text">INTERACT</span></div>
+  <div id="inv" class="inv"></div>
+  <div id="vignette" class="vignette"></div><div id="cold" class="coldfx"></div>
+  <div class="topright">
+    <button id="logbtn" class="roundbtn" aria-label="Keeper's Log" title="Keeper's Log (L)">📖</button>
+    <button id="mutebtn" class="roundbtn" aria-label="Mute sound" aria-pressed="false" title="Mute / unmute (M)"><span id="muteicon">🔊</span></button>
+    <button id="helpbtn" class="roundbtn" aria-label="Controls">?</button>
+  </div>
+  <div id="touch" class="touch hidden">
+    <div id="stick" class="stick"><i id="knob"></i></div>
+    <div class="tbtns"><button id="b-sprint" class="tb">SPRINT</button><button id="b-jump" class="tb">JUMP</button><button id="b-use" class="tb use">USE</button></div>
+    <div class="dpad"><button data-k="up">▲</button><button data-k="left">◀</button><button data-k="down">▼</button><button data-k="right">▶</button></div>
+  </div>
 </div>
-<script type="module" src="third-person.js"></script>
+
+<!-- HELP / END -->
+<section id="help" class="screen hidden"><div class="panel max-w-lg"><h3 class="text-xl font-semibold mb-3">Controls</h3>
+  <div class="grid grid-cols-2 gap-y-1 text-sm text-slate-200"><div>Move</div><div class="mono">WASD / Arrows</div><div>Look</div><div class="mono">Mouse (click to capture) / drag</div><div>Sprint</div><div class="mono">Shift</div><div>Jump</div><div class="mono">Space</div><div>Crouch</div><div class="mono">C / Ctrl</div><div>Interact</div><div class="mono">E</div><div>Flashlight</div><div class="mono">F</div><div>Pause</div><div class="mono">Esc / P</div></div>
+  <p class="text-xs text-slate-400 mt-3">Touch: left stick moves, right side drags to look. ▲◀▼▶ are on-screen arrows. Cold gusts drain warmth: shelter in the cabin or shed. Long falls cost hearts. Water is safe to land in.</p>
+  <button id="helpclose" class="btn-primary mt-4">Back to the island</button></div></section>
+<section id="end" class="screen hidden"><div class="panel max-w-lg text-center"><div id="end-kicker" class="mono tracking-[0.3em] text-xs text-teal-300/80"></div><h2 id="end-title" class="text-3xl font-semibold mt-2"></h2><p id="end-text" class="text-slate-300 mt-3"></p><div id="end-stats" class="mono text-xs text-slate-400 mt-4"></div><button id="again" class="btn-primary mt-6">Play again</button></div></section>
+<section id="logmodal" class="screen hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">
+  <div class="panel logpanel">
+    <div class="flex items-center justify-between"><div class="mono tracking-[0.3em] text-xs text-teal-300/80">KEEPER'S LOG</div><button id="logclose" class="roundbtn small" aria-label="Close log">✕</button></div>
+    <div id="log-date" class="mono text-xs text-amber-200/80 mt-3"></div>
+    <h3 id="log-title" class="text-2xl font-semibold mt-1"></h3>
+    <p id="log-body" class="logtext"></p>
+    <div class="flex items-center justify-between mt-5"><button id="logprev" class="btn-ghost">◀ Earlier</button><span id="log-count" class="mono text-xs text-slate-400"></span><button id="lognext" class="btn-ghost">Later ▶</button></div>
+  </div>
+</section>
+<section id="resume" class="screen hidden"><div class="panel max-w-md text-center"><div class="mono tracking-[0.3em] text-xs text-teal-300/80">SAVED GAME FOUND</div><h3 id="resume-title" class="text-2xl font-semibold mt-2"></h3><p id="resume-text" class="text-slate-300 mt-2 text-sm"></p>
+  <div class="flex gap-3 justify-center mt-5 flex-wrap"><button id="resume-go" class="btn-primary">Resume</button><button id="resume-new" class="btn-ghost">New game</button></div></div></section>
+<section id="loading" class="screen"><div class="mono tracking-[0.3em] text-sm text-teal-200/80">RAISING THE ISLAND…</div></section>
+
+<script type="module" src="main.js"></script>
 </body></html>
