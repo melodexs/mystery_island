@@ -6,9 +6,11 @@
    - footstep dust, wind-blown leaves and rain splashes as particles.
    Everything can be turned off with ALIVE.enabled = false, which restores the original drawing exactly. */
 (() => {
-  const ALIVE = { enabled: true, wind: 0.5, windTarget: 0.5, time: 0, strips: 48, gust: 0, nextGust: 6, leaves: [], splashes: [], mist: [], ripple: [], perf: { ms: 0, n: 0, scale: 1 } };
+  const ALIVE = { enabled: true, wind: 0.5, windTarget: 0.5, time: 0, strips: 48, gust: 0, nextGust: 6, leaves: [], splashes: [], mist: [], fog: [], ripple: [], perf: { ms: 0, n: 0, scale: 1 } };
   ALIVE.birds = []; ALIVE.shadows = []; ALIVE.nextFlock = 3;
   for (let i = 0; i < 3; i++) ALIVE.shadows.push({ x: Math.random() * 4600 - 300, w: 520 + Math.random() * 420, v: 14 + Math.random() * 12, a: 0.10 + Math.random() * 0.07 });
+  /* ground fog: wide low banks fixed in the world (so you run past them), drifting slowly; thicker over the chasm water and in the cave */
+  for (let i = 0; i < 16; i++) { const x = 100 + i * 250 + Math.random() * 120, wet = (x > 2700 && x < 3400) ? 1 : (x > 1500 && x < 2500 ? 0.8 : 0.45); ALIVE.fog.push({ x, w: 300 + Math.random() * 260, a: 0.05 + 0.07 * wet * Math.random() + 0.03 * wet, drift: (Math.random() - 0.5) * 6, ph: Math.random() * 6.28, y: 0.80 + Math.random() * 0.06 }); }
   for (let i = 0; i < 9; i++) ALIVE.mist.push({ x: Math.random(), y: 0.45 + Math.random() * 0.4, s: 0.35 + Math.random() * 0.5, v: 0.004 + Math.random() * 0.01, a: 0.04 + Math.random() * 0.05 });
 
   ALIVE.update = function (dt, game, camX, viewW, storm) {
@@ -21,6 +23,7 @@
     for (const l of this.leaves) { l.t += dt; l.x += (l.vx + this.wind * 120) * dt; l.y += (l.vy + Math.sin(l.t * 2.4) * 40) * dt; l.r += l.vr * dt; }
     this.leaves = this.leaves.filter((l) => l.x < camX + viewW + 80 && l.y < 960 && l.t < 14);
     for (const m of this.mist) { m.x += m.v * dt * (1 + this.wind); if (m.x > 1.3) m.x = -0.3; }
+    for (const f of this.fog) { f.x += (f.drift + this.wind * 4) * dt; f.ph += dt * 0.35; if (f.x > 4300) f.x = -200; if (f.x < -300) f.x = 4200; }
     // distant birds crossing the sky in loose flocks, quicker in a gust; they only appear while the player is in the world
     this.nextFlock -= dt;
     if (this.nextFlock <= 0 && this.birds.length < 14) {
@@ -65,6 +68,12 @@
   ALIVE.drawOverlay = function (ctx, viewW, worldH, camX) {
     if (!this.enabled) return;
     ctx.save();
+    for (const f of this.fog) {
+      const x = f.x - camX; if (x < -f.w || x > viewW + f.w) continue;
+      const y = f.y * worldH, a = f.a * (0.8 + 0.2 * Math.sin(f.ph)), g = ctx.createRadialGradient(x, y, 0, x, y, f.w);
+      g.addColorStop(0, `rgba(165,200,200,${a})`); g.addColorStop(0.6, `rgba(165,200,200,${a * 0.45})`); g.addColorStop(1, "rgba(165,200,200,0)");
+      ctx.save(); ctx.translate(x, y); ctx.scale(1, 0.22); ctx.translate(-x, -y); ctx.fillStyle = g; ctx.fillRect(x - f.w, y - f.w, f.w * 2, f.w * 2); ctx.restore();
+    }
     for (const m of this.mist) {
       const x = m.x * viewW, y = m.y * worldH, r = m.s * viewW * 0.5;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(170,205,205,${m.a * (0.6 + this.wind * 0.5)})`); g.addColorStop(1, "rgba(170,205,205,0)");
