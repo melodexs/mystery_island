@@ -73,6 +73,16 @@ sea.rotation.x=-Math.PI/2;sea.position.y=-2.7;scene.add(sea);
 const seaPositions=sea.geometry.attributes.position;
 const seaBase=Float32Array.from(seaPositions.array);
 
+// Weather system: layered rain streaks and distant lightning give the island motion.
+const rainCount=1900,rainData=new Float32Array(rainCount*3);
+for(let i=0;i<rainCount;i++){rainData[i*3]=(Math.random()-.5)*125;rainData[i*3+1]=Math.random()*58;rainData[i*3+2]=(Math.random()-.5)*125;}
+const rainGeometry=new THREE.BufferGeometry();
+rainGeometry.setAttribute("position",new THREE.BufferAttribute(rainData,3));
+const rain=new THREE.Points(rainGeometry,new THREE.PointsMaterial({color:0xa8c2cc,size:.075,transparent:true,opacity:.34,depthWrite:false}));
+scene.add(rain);
+const lightning=new THREE.PointLight(0xa9d6ed,0,170,1.4);lightning.position.set(-24,38,-18);scene.add(lightning);
+let lightningTimer=0;
+
 // Rocky shore boulders.
 for(let i=0;i<95;i++){
   const a=i/95*Math.PI*2, r=34+Math.random()*6;
@@ -142,6 +152,8 @@ for(let i=0;i<42;i++){
  const trunk=cylinder(scene,x,1.7,z,.22,.38,3.4,mats.wood,7);
  const crown=cone(scene,x,4.2,z,1.8,4.5,mats.leaf,7);
  crown.rotation.y=Math.random()*Math.PI;
+ const crownUpper=cone(scene,x,5.55,z,1.28,3.5,mats.leaf,7);crownUpper.rotation.y=Math.random()*Math.PI;
+ for(let c=0;c<3;c++){const clump=new THREE.Mesh(new THREE.DodecahedronGeometry(.95,1),mats.darkGrass);clump.position.set(x+(Math.random()-.5)*1.25,3.5+Math.random()*1.3,z+(Math.random()-.5)*1.25);clump.scale.set(1.1,.9,1);clump.castShadow=true;scene.add(clump);}
 }
 const cave= new THREE.Group();cave.position.set(-27,0,7);scene.add(cave);
 box(cave,0,2,0,10,4,5,mats.stone);
@@ -150,6 +162,28 @@ caveHole.position.set(0,2.1,2.56);cave.add(caveHole);
 for(let i=0;i<10;i++){
  const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(1.2,0),mats.stone2);
  rock.position.set(-32+Math.random()*10,.4,-8+Math.random()*20);rock.scale.y=.7;rock.castShadow=true;scene.add(rock);
+}
+// Dense ground cover, a broken stone footpath and low coastal shrubs.
+const grassInstances=new THREE.InstancedMesh(new THREE.ConeGeometry(.12,.7,4),new THREE.MeshStandardMaterial({color:0x435b43,roughness:1}),760);
+const grassDummy=new THREE.Object3D();
+let grassPlaced=0;
+while(grassPlaced<760){
+ const x=(Math.random()-.5)*62,z=(Math.random()-.5)*55;
+ if(x*x/(34*34)+z*z/(29*29)>.88)continue;
+ if(Math.abs(z+24)<10&&Math.abs(x)<12)continue;
+ grassDummy.position.set(x,.48,z);grassDummy.rotation.set(0,Math.random()*Math.PI,0);
+ const s=.55+Math.random()*1.3;grassDummy.scale.set(s,s,s);grassDummy.updateMatrix();grassInstances.setMatrixAt(grassPlaced++,grassDummy.matrix);
+}
+grassInstances.receiveShadow=true;scene.add(grassInstances);
+for(let i=0;i<34;i++){
+ const t=i/33,x=22*(1-t)+(-3)*t+(Math.random()-.5)*1.4,z=18*(1-t)+(-17)*t+(Math.random()-.5)*1.4;
+ const stone=new THREE.Mesh(new THREE.DodecahedronGeometry(.55+Math.random()*.35,0),mats.stone2);
+ stone.position.set(x,.28,z);stone.scale.set(1.5,.35,1);stone.rotation.y=Math.random()*Math.PI;stone.receiveShadow=true;scene.add(stone);
+}
+for(let i=0;i<46;i++){
+ const a=Math.random()*Math.PI*2,r=20+Math.random()*12,x=Math.cos(a)*r,z=Math.sin(a)*r*.8;
+ const bush=new THREE.Mesh(new THREE.DodecahedronGeometry(.7+Math.random()*.65,1),mats.darkGrass);
+ bush.position.set(x,.55,z);bush.scale.set(1.4,.8,1.1);bush.castShadow=true;scene.add(bush);
 }
 const wreck=new THREE.Group();wreck.position.set(25,0,17);wreck.rotation.y=-.45;scene.add(wreck);
 box(wreck,0,.5,0,8,1,2.8,mats.wood);
@@ -311,6 +345,10 @@ function animate(){
  // Rolling ocean swell, wind-driven rain and intermittent lightning keep the island alive.
  for(let i=0;i<seaPositions.count;i++){const x=seaBase[i*3],z=seaBase[i*3+2];seaPositions.array[i*3+1]=seaBase[i*3+1]+Math.sin(x*.12+elapsed*1.1)*.22+Math.cos(z*.17+elapsed*.8)*.15;}
  seaPositions.needsUpdate=true;sea.geometry.computeVertexNormals();
+ for(let i=0;i<rainCount;i++){const p=i*3;rainData[p]+=1.15*dt;rainData[p+1]-=22*dt;if(rainData[p+1]<-.5){rainData[p]=(Math.random()-.5)*125;rainData[p+1]=42+Math.random()*18;rainData[p+2]=(Math.random()-.5)*125;}}
+ rainGeometry.attributes.position.needsUpdate=true;
+ if(Math.random()<dt*.025)lightningTimer=.16;
+ if(lightningTimer>0){lightningTimer-=dt;lightning.intensity=lightningTimer>.07?8:2.5;moon.intensity=lightningTimer>.07?4.8:3.1;}else{lightning.intensity=0;moon.intensity=2.2;}
  if(Math.random()<dt*.035){moon.intensity=3.5;setTimeout(()=>moon.intensity=2.2,90);}
  for(const o of interactables){if(!o.active)continue;o.orb.position.y=1.3+Math.sin(elapsed*2.2+o.x)*.18;o.ring.rotation.z=elapsed*.45;}
  if(gameStarted){
