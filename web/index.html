@@ -10,7 +10,6 @@
 <body>
 <main id="app">
 
-  <!-- TITLE -->
   <section id="screen-title" class="screen active">
     <div class="bg" style="background-image:url('img/title.jpg')"></div>
     <div class="shade"></div>
@@ -21,9 +20,8 @@
     </div>
   </section>
 
-  <!-- CHARACTER SELECT -->
   <section id="screen-select" class="screen">
-    <div class="bg" style="background-image:url('img/scene_beach.jpg')"></div>
+    <div class="bg" style="background-image:url('img/world_1.jpg')"></div>
     <div class="shade heavy"></div>
     <div class="select-box">
       <h2>Choose your survivor</h2>
@@ -36,7 +34,6 @@
     </div>
   </section>
 
-  <!-- BOAT OPENING -->
   <section id="screen-boat" class="screen">
     <div id="boat-bg" class="bg boat-bg"></div>
     <div class="shade"></div>
@@ -48,16 +45,9 @@
     <button id="story-skip" class="btn ghost small skip">Skip</button>
   </section>
 
-  <!-- GAME -->
   <section id="screen-game" class="screen">
-    <div id="stage" class="stage">
-      <div id="scene-bg" class="bg scene-bg"></div>
-      <div id="hotspots" class="hotspots"></div>
-      <img id="figure" class="figure" alt="">
-      <div class="lightning" id="bolt"></div>
-      <canvas id="rain"></canvas>
-    </div>
-    <div class="shade soft"></div>
+    <canvas id="view"></canvas>
+    <div class="lightning" id="bolt"></div>
 
     <header class="hud">
       <div class="hud-left">
@@ -78,18 +68,18 @@
     <div id="message" class="toast"></div>
     <div id="prompt" class="prompt"></div>
 
-    <button id="arrow-l" class="edge-btn left" aria-label="Walk left">&#8249;</button>
-    <button id="arrow-r" class="edge-btn right" aria-label="Walk right">&#8250;</button>
-    <button id="act" class="act" type="button">Use</button>
+    <!-- touch controls -->
+    <div id="stick" class="stick" aria-label="Move"><div id="knob" class="knob"></div></div>
+    <button id="btn-jump" class="tbtn jump" type="button" aria-label="Jump">Jump</button>
+    <button id="btn-use" class="tbtn use" type="button" aria-label="Use">Use</button>
 
     <div class="corner">
       <button id="mute" class="btn ghost small" type="button">Sound on</button>
       <button id="quit" class="btn ghost small" type="button">Quit</button>
     </div>
-    <p class="keys">Walk: A / D or arrows &nbsp;&middot;&nbsp; Use: E or Space &nbsp;&middot;&nbsp; Or tap the scene</p>
+    <p class="keys">Run: A / D or arrows &nbsp;&middot;&nbsp; Jump: W, Up or Space &nbsp;&middot;&nbsp; Use: E</p>
   </section>
 
-  <!-- END -->
   <section id="screen-end" class="screen">
     <div id="end-bg" class="bg"></div>
     <div class="shade heavy"></div>
@@ -101,8 +91,7 @@
   </section>
 
 </main>
-<script src="story.js"></script>
-<script src="rules.js"></script>
+<script src="world.js"></script>
 <script src="main.js"></script>
 </body>
 </html>

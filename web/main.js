@@ -1,19 +1,13 @@
-/* Mystery Island - illustrated adventure: browser layer.
-   Rules live in rules.js (Game), data in story.js. This file draws and listens. */
+/* Mystery Island - animated painted side-scroller: browser layer.
+   Physics and rules live in world.js (Game). This file draws, animates and listens. */
 (() => {
   const $ = (id) => document.getElementById(id);
-  const DATA = { CHARACTERS, SCENES, START_SCENE, START_X, WIDTHS_PER_ENERGY };
+  let state = "title";              // title | select | boat | playing | ending
+  let game = null, chosen = null, muted = false;
 
-  let state = "title";               // title | select | boat | playing | ending
-  let game = null, chosen = null;
-  let muted = false;
+  function show(id) { document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active")); $(id).classList.add("active"); }
 
-  function show(id) {
-    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
-    $(id).classList.add("active");
-  }
-
-  /* ---------------- audio (tiny synth) ---------------- */
+  /* ---------------- audio ---------------- */
   let actx = null;
   function audio() {
     if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {} }
@@ -28,125 +22,218 @@
     g.gain.setValueAtTime(vol, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
     o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + dur);
   }
-  function thunder() {
+  function noise(dur, freq, vol) {
     const a = audio(); if (!a || muted) return;
-    const n = a.sampleRate * 1.6, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+    const n = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
     const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-    f.type = "lowpass"; f.frequency.value = 200; g.gain.value = 0.4;
-    s.buffer = buf; s.connect(f); f.connect(g); g.connect(a.destination); s.start();
+    f.type = "lowpass"; f.frequency.value = freq; g.gain.value = vol; s.buffer = buf; s.connect(f); f.connect(g); g.connect(a.destination); s.start();
   }
+  const thunder = () => noise(1.6, 200, 0.4);
   const SFX = {
+    jump:   () => beep(300, .14, "triangle", .05, 260),
+    land:   () => noise(.12, 500, .18),
+    step:   () => noise(.05, 700, .05),
     pickup: () => { beep(660, .09, "triangle"); setTimeout(() => beep(990, .14, "triangle"), 90); },
     build:  () => { beep(180, .12, "square", .05); setTimeout(() => beep(240, .12, "square", .05), 120); setTimeout(() => beep(330, .2, "square", .05), 240); },
     deny:   () => beep(140, .18, "sawtooth", .05),
     tired:  () => beep(260, .25, "sine", .05, -120),
-    scene:  () => beep(480, .16, "sine", .04),
+    fall:   () => beep(400, .6, "sawtooth", .05, -330),
     win:    () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, .3, "triangle", .07), i * 150)),
     lose:   () => [330, 262, 196, 130].forEach((f, i) => setTimeout(() => beep(f, .35, "sawtooth", .05), i * 200)),
   };
   $("mute").addEventListener("click", () => { muted = !muted; $("mute").textContent = muted ? "Sound off" : "Sound on"; });
 
   /* ---------------- lightning ---------------- */
-  function bolt(el) {
-    el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");
-    setTimeout(thunder, 300 + Math.random() * 500);
-  }
-  let boltTimer = null;
+  let boltTimer = null, flash = 0;
   function startStorm() {
     stopStorm();
     const tick = () => {
-      if (state === "playing") bolt($("bolt")); else if (state === "boat") bolt($("boat-bolt"));
+      if (state === "playing") { flash = 1; setTimeout(thunder, 300 + Math.random() * 500); }
+      else if (state === "boat") { const el = $("boat-bolt"); el.classList.remove("go"); void el.offsetWidth; el.classList.add("go"); setTimeout(thunder, 400); }
       boltTimer = setTimeout(tick, 5000 + Math.random() * 8000);
     };
     boltTimer = setTimeout(tick, 2500);
   }
   function stopStorm() { clearTimeout(boltTimer); }
 
-  /* ---------------- rain canvas ---------------- */
-  const rain = $("rain"), rctx = rain.getContext("2d");
-  let RW = 0, RH = 0;
-  const drops = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() }));
-  function sizeRain() { RW = rain.width = window.innerWidth; RH = rain.height = window.innerHeight; }
-  window.addEventListener("resize", sizeRain); sizeRain();
-  function drawRain(dt) {
-    rctx.clearRect(0, 0, RW, RH);
-    rctx.strokeStyle = "rgba(190,225,235,.32)"; rctx.lineWidth = 1; rctx.beginPath();
-    for (const d of drops) {
-      d.y += dt * (1.0 + d.s * .7); d.x -= dt * .1;
-      if (d.y > 1) { d.y = -.05; d.x = Math.random() * 1.15; }
-      if (d.x < 0) d.x += 1.1;
-      const x = d.x * RW, y = d.y * RH; rctx.moveTo(x, y); rctx.lineTo(x - 4, y + 13 * d.s);
-    }
-    rctx.stroke();
+  /* ---------------- art ---------------- */
+  const IMG = {};
+  function load(name, src) { const i = new Image(); i.src = src; IMG[name] = i; return i; }
+  ["world_1", "world_2", "world_3"].forEach((n) => load(n, `img/${n}.jpg`));
+  Object.keys(CHARACTERS).forEach((k) => { load("fig_" + k, `img/fig_${k}.png`); load("face_" + k, `img/${k}.jpg`); });
+  ["boat", "landing", "title"].forEach((n) => load(n, `img/${n}.jpg`));
+  const WORLD_PIECES = [{ n: "world_1", x: 0, w: 1365 }, { n: "world_2", x: 1365, w: 1365 }, { n: "world_3", x: 2730, w: 1366 }];
+
+  /* ---------------- canvas + camera ---------------- */
+  const cv = $("view"), ctx = cv.getContext("2d");
+  let VW = 0, VH = 0, DPR = 1, SCALE = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    VW = window.innerWidth; VH = window.innerHeight;
+    cv.width = Math.floor(VW * DPR); cv.height = Math.floor(VH * DPR);
+    cv.style.width = VW + "px"; cv.style.height = VH + "px";
+    SCALE = VH / WORLD_H;                       // world height fills the screen height
   }
+  window.addEventListener("resize", resize); resize();
+  const cam = { x: 0 };
 
   /* ---------------- input ---------------- */
-  const keys = new Set();
-  let useQueued = false;
-  const HOLD = { left: false, right: false };      // on-screen arrow buttons
-
+  const keys = new Set(); let jumpPressed = false, usePressed = false;
+  const touch = { dir: 0, jumpHeld: false };
   window.addEventListener("keydown", (e) => {
     if (["ArrowLeft", "KeyA"].includes(e.code)) { keys.add("l"); e.preventDefault(); }
     if (["ArrowRight", "KeyD"].includes(e.code)) { keys.add("r"); e.preventDefault(); }
-    if (["KeyE", "Space", "Enter"].includes(e.code) && !e.repeat) {
-      if (state === "playing") { useQueued = true; e.preventDefault(); }
-      if (state === "boat") { nextStory(); e.preventDefault(); }
-    }
+    if (["ArrowUp", "KeyW", "Space"].includes(e.code)) { if (!keys.has("j") && state === "playing") jumpPressed = true; keys.add("j"); e.preventDefault(); }
+    if (e.code === "KeyE" && !e.repeat) { if (state === "playing") usePressed = true; }
+    if ((e.code === "Enter" || e.code === "Space") && state === "boat") { nextStory(); e.preventDefault(); }
   });
   window.addEventListener("keyup", (e) => {
     if (["ArrowLeft", "KeyA"].includes(e.code)) keys.delete("l");
     if (["ArrowRight", "KeyD"].includes(e.code)) keys.delete("r");
+    if (["ArrowUp", "KeyW", "Space"].includes(e.code)) keys.delete("j");
   });
-  window.addEventListener("blur", () => { keys.clear(); HOLD.left = HOLD.right = false; });
+  window.addEventListener("blur", () => { keys.clear(); touch.dir = 0; touch.jumpHeld = false; });
 
-  function holdBtn(id, side) {
-    const el = $(id);
-    el.addEventListener("pointerdown", (e) => { HOLD[side] = true; try { el.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
-    const up = () => { HOLD[side] = false; };
-    el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); el.addEventListener("lostpointercapture", up);
+  // virtual stick (left side): drag left/right
+  const stick = $("stick"), knob = $("knob"); let stickId = null, stickCx = 0;
+  stick.addEventListener("pointerdown", (e) => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (_) {} const r = stick.getBoundingClientRect(); stickCx = r.left + r.width / 2; moveStick(e); e.preventDefault(); });
+  stick.addEventListener("pointermove", (e) => { if (e.pointerId === stickId) moveStick(e); });
+  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touch.dir = 0; knob.style.transform = "translate(-50%,-50%)"; };
+  stick.addEventListener("pointerup", endStick); stick.addEventListener("pointercancel", endStick); stick.addEventListener("lostpointercapture", endStick);
+  function moveStick(e) {
+    const r = stick.getBoundingClientRect(), half = r.width / 2;
+    const dx = Math.max(-half, Math.min(half, e.clientX - stickCx));
+    knob.style.transform = `translate(calc(-50% + ${dx * 0.7}px), -50%)`;
+    touch.dir = Math.abs(dx) < half * 0.22 ? 0 : (dx > 0 ? 1 : -1);
   }
-  holdBtn("arrow-l", "left"); holdBtn("arrow-r", "right");
-  $("act").addEventListener("pointerdown", (e) => { if (state === "playing") useQueued = true; e.preventDefault(); });
+  const jb = $("btn-jump");
+  jb.addEventListener("pointerdown", (e) => { jumpPressed = true; touch.jumpHeld = true; try { jb.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+  const jup = () => { touch.jumpHeld = false; };
+  jb.addEventListener("pointerup", jup); jb.addEventListener("pointercancel", jup); jb.addEventListener("lostpointercapture", jup);
+  $("btn-use").addEventListener("pointerdown", (e) => { usePressed = true; e.preventDefault(); });
   document.addEventListener("gesturestart", (e) => e.preventDefault());
 
-  function dirInput() {
-    const l = keys.has("l") || HOLD.left, r = keys.has("r") || HOLD.right;
-    return (r ? 1 : 0) - (l ? 1 : 0);
+  function readInput() {
+    const l = keys.has("l") || touch.dir < 0, r = keys.has("r") || touch.dir > 0;
+    return { dir: (r ? 1 : 0) - (l ? 1 : 0), jump: jumpPressed, jumpHeld: keys.has("j") || touch.jumpHeld };
   }
 
-  /* tap the painting: walk there, or use the object you tapped */
-  $("stage").addEventListener("pointerdown", (e) => {
-    if (state !== "playing") return;
-    audio();
-    const r = $("stage").getBoundingClientRect();
-    game.tap((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-  });
+  /* ---------------- drawing ---------------- */
+  const fx = { lean: 0, bob: 0, sx: 1, sy: 1, rain: Array.from({ length: 150 }, () => ({ x: Math.random(), y: Math.random(), s: .6 + Math.random() })) };
 
-  /* ---------------- stage layout ---------------- */
-  /* The scene art is square. Cover the screen with it, and keep a figure standing on the ground line. */
-  const stage = $("stage"), bg = $("scene-bg"), figure = $("figure");
-  let currentImg = "";
-  function layoutFigure() {
-    const s = game.sceneData, W = stage.clientWidth, H = stage.clientHeight;
-    const h = H * s.scale * 0.62;                                  // figure height in px
-    figure.style.height = h + "px";
-    figure.style.left = (game.x * W) + "px";
-    figure.style.top = (s.ground * H) + "px";
-    const bob = game.moving ? Math.abs(Math.sin(performance.now() / 110)) * 4 : 0;
-    figure.style.transform = `translate(-50%, -100%) translateY(${-bob}px) scaleX(${game.facing === "left" ? -1 : 1})`;
+  function drawWorld() {
+    const W = VW / SCALE;                                  // visible world width in world units
+    const parallaxX = cam.x * 0.0;                          // painting is the main layer; storm layer below drifts
+    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    ctx.fillStyle = "#04100f"; ctx.fillRect(0, 0, VW / SCALE, WORLD_H);
+    for (const p of WORLD_PIECES) {
+      const img = IMG[p.n]; if (!img.complete || !img.naturalWidth) continue;
+      const sx = p.x - cam.x;
+      if (sx + p.w < -2 || sx > W + 2) continue;
+      ctx.drawImage(img, sx, 0, p.w + 1, WORLD_H);
+    }
+    ctx.restore();
   }
-  function setScene() {
-    const s = game.sceneData;
-    if (currentImg !== s.img) { bg.style.backgroundImage = `url('${s.img}')`; currentImg = s.img; }
-    // hotspot markers (soft glow only, no UI chrome)
-    const hs = $("hotspots"); hs.innerHTML = "";
-    game.hotspotsHere().forEach((h) => {
-      const d = document.createElement("div"); d.className = "hs " + h.kind;
-      d.style.left = (h.x * 100) + "%"; d.style.top = (h.y * 100) + "%";
-      d.style.width = d.style.height = (h.r * 2 * 100) + "vmin";
-      hs.appendChild(d);
-    });
+
+  function drawGround() {
+    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    const W = VW / SCALE;
+    for (const p of game.platforms()) {
+      const sx = p.x - cam.x; if (sx + p.w < -4 || sx > W + 4) continue;
+      const lifted = p.y < GROUND_Y - 20;                  // rocks and crates are raised
+      // soft painted slab: dark top edge with a faint rim light, fading into the scene
+      const g = ctx.createLinearGradient(0, p.y, 0, p.y + (lifted ? 60 : 130));
+      g.addColorStop(0, lifted ? "rgba(46,62,60,.96)" : "rgba(10,18,17,.92)"); g.addColorStop(1, "rgba(4,10,9,0)");
+      ctx.fillStyle = g; ctx.fillRect(sx, p.y, p.w, lifted ? 60 : 130);
+      ctx.fillStyle = lifted ? "rgba(140,200,190,.55)" : "rgba(95,211,196,.18)"; ctx.fillRect(sx, p.y - 1, p.w, 3);
+      if (lifted) { ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(sx, p.y + 60, p.w, 160); }
+    }
+    // the broken bridge: show jagged plank stubs on each side until repaired
+    if (!game.bridgeRepaired) {
+      ctx.fillStyle = "rgba(40,28,18,.95)";
+      for (let i = 0; i < 3; i++) { ctx.fillRect(2830 - cam.x - 90 + i * 28, GROUND_Y - 4, 22, 10 + i * 4); ctx.fillRect(3290 - cam.x + 68 - i * 28, GROUND_Y - 4, 22, 10 + i * 4); }
+    } else {
+      ctx.fillStyle = "rgba(112,78,44,.95)";
+      for (let i = 0; i < 20; i++) ctx.fillRect(2830 - cam.x + i * 23, GROUND_Y - 6, 21, 12);
+      ctx.fillStyle = "rgba(200,160,100,.5)"; ctx.fillRect(2830 - cam.x, GROUND_Y - 8, 460, 3);
+    }
+    ctx.restore();
+  }
+
+  function drawObjects(t) {
+    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    for (const o of game.objectsHere()) {
+      const sx = o.x - cam.x; if (sx < -200 || sx > VW / SCALE + 200) continue;
+      const pulse = 0.55 + 0.45 * Math.sin(t / 380);
+      const g = ctx.createRadialGradient(sx, o.y, 0, sx, o.y, o.r);
+      g.addColorStop(0, `rgba(255,215,122,${0.42 * pulse})`); g.addColorStop(1, "rgba(255,215,122,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, o.y, o.r, 0, 7); ctx.fill();
+      // little icon
+      ctx.fillStyle = "#ffd77a"; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 3;
+      if (o.id === "rope") { ctx.beginPath(); ctx.ellipse(sx, o.y, 26, 14, 0, 0, 7); ctx.stroke(); ctx.beginPath(); ctx.ellipse(sx, o.y, 16, 8, 0, 0, 7); ctx.stroke(); }
+      else if (o.id === "lantern") { ctx.fillRect(sx - 12, o.y - 20, 24, 34); ctx.fillStyle = "#fff1b8"; ctx.fillRect(sx - 7, o.y - 14, 14, 22); }
+      else if (o.id === "beacon") { ctx.beginPath(); ctx.arc(sx, o.y, 22, 0, 7); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+
+  /* the painted survivor: stride bob, lean into the run, squash and stretch, shadow */
+  function drawPlayer(dt) {
+    const img = IMG["fig_" + chosen]; if (!img.complete || !img.naturalWidth) return;
+    const speed = Math.abs(game.vx) / game.c.run;
+    const targetLean = (game.vx / game.c.run) * 0.16 + (game.onGround ? 0 : Math.max(-0.14, Math.min(0.14, game.vy / 9000)));
+    fx.lean += (targetLean - fx.lean) * Math.min(1, dt * 12);
+    const stride = game.onGround ? Math.sin(game.runTime * 3.2) * speed : 0;
+    fx.bob = Math.abs(stride) * 16;
+    // squash on landing, stretch while rising or falling fast
+    let sy = 1, sx = 1;
+    if (game.squash > 0) { sy = 1 - 0.22 * game.squash; sx = 1 + 0.2 * game.squash; }
+    else if (!game.onGround) { const s = Math.min(0.14, Math.abs(game.vy) / 9000); sy = 1 + s; sx = 1 - s * 0.8; }
+    fx.sx += (sx - fx.sx) * Math.min(1, dt * 20); fx.sy += (sy - fx.sy) * Math.min(1, dt * 20);
+
+    const h = PLAYER_H * 1.12, w = h * (img.naturalWidth / img.naturalHeight);
+    const px = game.x - cam.x, py = game.y;
+    ctx.save(); ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, 0, 0);
+    // shadow on whatever you stand on; shrinks as you leave it
+    const lift = game.onGround ? 0 : Math.min(1, (GROUND_Y - game.y) / 300 + 0.2);
+    ctx.fillStyle = `rgba(0,0,0,${0.45 - lift * 0.2})`;
+    ctx.beginPath(); ctx.ellipse(px, (game.onGround ? py : GROUND_Y) + 4, 46 * (1 - lift * 0.4), 9, 0, 0, 7); ctx.fill();
+    // dust puffs
+    for (const d of game.dust) { const a = 1 - d.t / 0.5; ctx.fillStyle = `rgba(190,205,200,${0.35 * a})`; ctx.beginPath(); ctx.arc(d.x - cam.x + (d.t * 40) * (d.x % 2 ? 1 : -1), d.y - 6 - d.t * 30, 10 + d.t * 28, 0, 7); ctx.fill(); }
+    // the figure, pivoting at the feet
+    ctx.translate(px, py - fx.bob);
+    ctx.rotate(fx.lean * game.facing * (game.facing > 0 ? 1 : -1));
+    ctx.scale(game.facing * fx.sx, fx.sy);
+    ctx.drawImage(img, -w / 2, -h, w, h);
+    ctx.restore();
+  }
+
+  function drawWeather(dt, t) {
+    // rain in screen space, drifting with the camera for parallax
+    ctx.save(); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.strokeStyle = "rgba(190,225,235,.3)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (const d of fx.rain) {
+      d.y += dt * (1.0 + d.s * .7); d.x -= dt * .12 + (game.vx / 60000);
+      if (d.y > 1) { d.y = -.05; d.x = Math.random() * 1.15; }
+      if (d.x < 0) d.x += 1.1; if (d.x > 1.1) d.x -= 1.1;
+      const x = d.x * VW, y = d.y * VH; ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 13 * d.s);
+    }
+    ctx.stroke();
+    // foreground mist band for depth, moving faster than the world
+    const mx = (-cam.x * SCALE * 1.4) % VW;
+    const g = ctx.createLinearGradient(0, VH * 0.82, 0, VH);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,8,8,.55)"); ctx.fillStyle = g; ctx.fillRect(0, VH * 0.82, VW, VH * 0.18);
+    ctx.restore();
+    if (flash > 0) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = `rgba(212,242,238,${flash * 0.4})`; ctx.fillRect(0, 0, cv.width, cv.height); ctx.restore(); flash = Math.max(0, flash - dt * 2.2); }
+  }
+
+  function updateCamera(dt) {
+    const W = VW / SCALE;
+    const lookAhead = game.facing * Math.min(1, Math.abs(game.vx) / game.c.run) * 130;   // camera leads the run
+    const want = Math.max(0, Math.min(WORLD_W - W, game.x + lookAhead - W * 0.45));
+    cam.x += (want - cam.x) * Math.min(1, dt * 5);
+    cam.x = Math.max(0, Math.min(Math.max(0, WORLD_W - W), cam.x));
   }
 
   /* ---------------- HUD ---------------- */
@@ -156,44 +243,38 @@
     const en = $("energy"); en.innerHTML = "";
     for (let i = 0; i < game.maxEnergy; i++) { const p = document.createElement("span"); p.className = "pip"; en.appendChild(p); }
   }
-  let lastInv = "", lastScene = "";
+  let lastInv = "";
+  function placeName() { const x = game.x; return x < 1500 ? (x < 700 ? "Beach" : "Jungle") : x < 2500 ? "Cave" : x < 3290 ? "Old Bridge" : "Lighthouse"; }
   function updateHud() {
-    $("hud-loc").textContent = game.sceneData.name;
+    $("hud-loc").textContent = placeName();
     document.querySelectorAll("#energy .pip").forEach((p, i) => p.classList.toggle("full", i < game.energy));
-    const invKey = game.inventory.join(",");
-    if (invKey !== lastInv) {
-      lastInv = invKey; const inv = $("inventory"); inv.innerHTML = "";
-      if (!game.inventory.length) inv.innerHTML = '<span class="empty">empty</span>';
-      game.inventory.forEach((it) => { const t = document.createElement("span"); t.className = "item"; t.textContent = it; inv.appendChild(t); });
-    }
+    const k = game.inventory.join(",");
+    if (k !== lastInv) { lastInv = k; const inv = $("inventory"); inv.innerHTML = ""; if (!game.inventory.length) inv.innerHTML = '<span class="empty">empty</span>'; game.inventory.forEach((it) => { const t = document.createElement("span"); t.className = "item"; t.textContent = it; inv.appendChild(t); }); }
     $("message").textContent = game.message; $("message").style.opacity = game.message ? 1 : 0;
     const pr = game.over ? "" : game.prompt();
     $("prompt").textContent = pr ? `${pr}  [E]` : ""; $("prompt").style.opacity = pr ? 1 : 0;
-    $("act").style.display = pr ? "" : "none";
+    $("btn-use").classList.toggle("ready", !!pr);
     $("goal").textContent = goalText();
-    if (game.scene !== lastScene) { lastScene = game.scene; setScene(); }
   }
   function goalText() {
     if (game.won) return "";
     const R = game.inventory.includes("rope"), L = game.inventory.includes("lantern");
-    if (!R) return "Goal: find a rope in the jungle";
-    if (!L) return "Goal: find a lantern in the cave";
+    if (!R) return "Goal: find the rope in the jungle";
+    if (!L) return "Goal: climb the crates in the cave for the lantern";
     if (!game.bridgeRepaired) return "Goal: repair the old bridge";
-    return "Goal: light the beacon at the top of the lighthouse";
+    return "Goal: light the beacon at the lighthouse";
   }
 
   /* ---------------- boat opening ---------------- */
   const STORY = [
-    { img: "img/boat.jpg",    text: "The storm came out of nowhere. Your boat is all that is left, and the sea is winning." },
-    { img: "img/boat.jpg",    text: "Through the rain you see a light: a lighthouse on a black island. It flickers, then dies." },
-    { img: "img/landing.jpg", text: "The waves throw you onto the sand. A rope, a lantern and a broken bridge. That is how you get off this island." },
+    { img: "boat",    text: "The storm came out of nowhere. Your boat is all that is left, and the sea is winning." },
+    { img: "boat",    text: "Through the rain you see a light: a lighthouse on a black island. It flickers, then dies." },
+    { img: "landing", text: "The waves throw you onto the sand. Find a rope and a lantern, fix the bridge, and light the beacon." },
   ];
   let storyIdx = 0;
   function showStory() {
-    const st = STORY[storyIdx];
-    $("boat-bg").style.backgroundImage = `url('${st.img}')`;
-    const el = $("story-text"); el.textContent = "";
-    let i = 0; clearInterval(showStory.t);
+    const st = STORY[storyIdx]; $("boat-bg").style.backgroundImage = `url('img/${st.img}.jpg')`;
+    const el = $("story-text"); el.textContent = ""; let i = 0; clearInterval(showStory.t);
     showStory.t = setInterval(() => { el.textContent = st.text.slice(0, ++i); if (i >= st.text.length) clearInterval(showStory.t); }, 22);
     $("story-next").textContent = storyIdx === STORY.length - 1 ? "Wake on the beach" : "Continue";
   }
@@ -207,79 +288,58 @@
   $("story-skip").addEventListener("click", () => { clearInterval(showStory.t); beginGame(); });
 
   /* ---------------- flow ---------------- */
-  function startBoat() {
-    game = new Game(DATA, chosen, $("name-input").value.trim());
-    state = "boat"; storyIdx = 0; show("screen-boat"); showStory(); startStorm();
-  }
+  function startBoat() { game = new Game(chosen, $("name-input").value.trim()); state = "boat"; storyIdx = 0; show("screen-boat"); showStory(); startStorm(); }
   function beginGame() {
     clearInterval(showStory.t);
-    state = "playing"; useQueued = false; lastInv = "~"; lastScene = ""; currentImg = "";
-    $("figure").src = `img/fig_${chosen}.png`;
-    show("screen-game"); buildHud(); setScene();
-    game.say(`${game.name}, find a rope and a lantern. Light the beacon.`, 5);
-    lastT = performance.now(); startStorm();
+    state = "playing"; jumpPressed = usePressed = false; lastInv = "~"; cam.x = 0; lastT = performance.now();
+    show("screen-game"); resize(); buildHud();
+    game.say(`${game.name}, find the rope and the lantern. Light the beacon.`, 5); startStorm();
   }
   function endGame() {
-    stopStorm();
-    const title = $("end-title"), text = $("end-text");
-    if (game.won) {
-      title.textContent = "YOU WIN!"; title.className = "win";
-      text.textContent = `The beacon blazes. The rescue boat is coming. You survived the island, ${game.name}.`;
-      $("end-bg").style.backgroundImage = "url('img/title.jpg')";
-    } else {
-      title.textContent = "GAME OVER"; title.className = "lose";
-      text.textContent = "The island claims another traveler.";
-      $("end-bg").style.backgroundImage = "url('img/scene_cave.jpg')";
-    }
+    stopStorm(); const title = $("end-title"), text = $("end-text");
+    if (game.won) { title.textContent = "YOU WIN!"; title.className = "win"; text.textContent = `The beacon blazes. The rescue boat is coming. You survived the island, ${game.name}.`; $("end-bg").style.backgroundImage = "url('img/title.jpg')"; }
+    else { title.textContent = "GAME OVER"; title.className = "lose"; text.textContent = "The island claims another traveler."; $("end-bg").style.backgroundImage = "url('img/world_2.jpg')"; }
     state = "title"; show("screen-end");
   }
 
-  /* ---------------- title + select ---------------- */
   function buildCards() {
     const box = $("cards"); box.innerHTML = "";
     Object.entries(CHARACTERS).forEach(([key, c]) => {
       const card = document.createElement("button"); card.type = "button"; card.className = "card"; card.dataset.key = key;
       card.innerHTML = `<img src="img/${key}.jpg" alt="${c.title}"><span class="c-title">${c.title}</span><span class="c-blurb">${c.blurb}</span><span class="c-perk">${c.perk}</span>`;
-      card.addEventListener("click", () => {
-        chosen = key; document.querySelectorAll(".card").forEach((x) => x.classList.toggle("sel", x.dataset.key === key));
-        $("begin").disabled = false;
-      });
+      card.addEventListener("click", () => { chosen = key; document.querySelectorAll(".card").forEach((x) => x.classList.toggle("sel", x.dataset.key === key)); $("begin").disabled = false; });
       box.appendChild(card);
     });
   }
   $("start").addEventListener("click", () => { audio(); chosen = null; $("begin").disabled = true; buildCards(); state = "select"; show("screen-select"); });
-  $("name-form").addEventListener("submit", (e) => {
-    e.preventDefault(); audio();
-    if (!chosen) return;
-    if (!$("name-input").value.trim()) { $("name-error").hidden = false; return; }
-    $("name-error").hidden = true; startBoat();
-  });
+  $("name-form").addEventListener("submit", (e) => { e.preventDefault(); audio(); if (!chosen) return; if (!$("name-input").value.trim()) { $("name-error").hidden = false; return; } $("name-error").hidden = true; startBoat(); });
   $("quit").addEventListener("click", () => { if (state === "playing") { game.over = true; game.won = false; endGame(); } });
   $("again").addEventListener("click", () => { $("name-input").value = ""; state = "title"; show("screen-title"); });
 
   /* ---------------- loop ---------------- */
-  let lastT = performance.now(), endTimer = 0;
+  let lastT = performance.now();
+  const STEP = 1 / 120; let acc = 0;
   function frame(now) {
     requestAnimationFrame(frame);
-    let dt = Math.min((now - lastT) / 1000, 0.05); lastT = now;
-    if (state !== "playing") return;
-
-    if (useQueued) { game.interact(); useQueued = false; }
-    game.update(dt, dirInput());
-    game.autoUse();
-    game.events.splice(0).forEach((ev) => {
-      if (SFX[ev]) SFX[ev]();
-      if (ev === "win" || ev === "lose") { state = "ending"; endTimer = ev === "win" ? 2.8 : 2.2; setTimeout(endGame, endTimer * 1000); }
-    });
-    drawRain(dt); layoutFigure(); updateHud();
+    const dt = Math.min((now - lastT) / 1000, 0.05); lastT = now;
+    if (state !== "playing" && state !== "ending") return;
+    if (state === "playing") {
+      const input = readInput(); acc += dt;                      // fixed physics step keeps jumps identical on every device
+      let first = true;
+      while (acc >= STEP) { game.update(STEP, { dir: input.dir, jump: first && input.jump, jumpHeld: input.jumpHeld }); first = false; acc -= STEP; }
+      jumpPressed = false;
+      if (usePressed) { game.interact(); usePressed = false; }
+      game.events.splice(0).forEach((ev) => {
+        if (SFX[ev]) SFX[ev]();
+        if (ev === "win" || ev === "lose") { state = "ending"; setTimeout(endGame, ev === "win" ? 2800 : 2200); }
+      });
+    }
+    updateCamera(dt);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+    drawWorld(); drawGround(); drawObjects(now); drawPlayer(dt); drawWeather(dt, now); updateHud();
   }
   requestAnimationFrame(frame);
-  document.addEventListener("visibilitychange", () => { lastT = performance.now(); });
+  document.addEventListener("visibilitychange", () => { lastT = performance.now(); acc = 0; });
 
-  // preload art so scene changes are instant
-  Object.values(SCENES).forEach((s) => { new Image().src = s.img; });
-  ["boat", "landing", "title"].forEach((n) => { new Image().src = `img/${n}.jpg`; });
-  Object.keys(CHARACTERS).forEach((k) => { new Image().src = `img/fig_${k}.png`; new Image().src = `img/${k}.jpg`; });
-
-  window.__game = { get game() { return game; }, get state() { return state; }, use() { useQueued = true; } };
+  window.__game = { get game() { return game; }, get state() { return state; }, get cam() { return cam; }, get scale() { return SCALE; } };
 })();
