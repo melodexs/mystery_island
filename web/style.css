@@ -87,3 +87,18 @@ h1.lose { color:var(--warn); text-shadow:0 0 30px rgba(255,138,107,.5),0 4px 18p
 .tbtn.use.ready { color:var(--ink); background:var(--gold); border-color:#fff3c0; box-shadow:0 0 18px rgba(255,215,122,.6); opacity:1; }
 .tbtn:active { transform:scale(.95); }
 @media (pointer:coarse),(hover:none) { .stick,.tbtn { display:block; } .keys { display:none; } .prompt { bottom:7.6rem; } }
+
+.tbtn.slide  { right:1.4rem; bottom:7.2rem; width:78px; height:78px; font-size:.85rem; color:var(--text); background:rgba(5,16,15,.6); border:2px solid rgba(95,211,196,.5); }
+.tbtn.sprint { left:1.6rem; bottom:7rem; width:84px; height:56px; border-radius:99px; font-size:.85rem; color:var(--text); background:rgba(5,16,15,.6); border:2px solid rgba(95,211,196,.5); }
+.tbtn.slide.on,.tbtn.sprint.on { color:var(--ink); background:var(--teal); box-shadow:0 0 16px rgba(95,211,196,.6); }
+@media (pointer:coarse),(hover:none) { .tbtn.slide,.tbtn.sprint { display:block; } }
+
+/* touch layout: left thumb = stick + sprint, right thumb = jump, slide, use. Sized for 390px-tall landscape phones. */
+@media (pointer:coarse),(hover:none) {
+  .stick       { left:1rem;  bottom:.9rem; width:168px; height:84px; }
+  .tbtn.sprint { left:1rem;  bottom:6.8rem; width:84px; height:44px; }
+  .tbtn.jump   { right:1rem; bottom:.9rem; width:84px; height:84px; }
+  .tbtn.slide  { right:7rem; bottom:.9rem; width:68px; height:68px; }
+  .tbtn.use    { right:1rem; bottom:6.8rem; width:68px; height:68px; }
+  .prompt      { bottom:8.6rem; }
+}
